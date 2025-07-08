@@ -1,0 +1,7 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+twilio==8.10.0
+psycopg2-binary==2.9.7
+APScheduler==3.10.4
+python-multipart==0.0.6
+python-dotenv==1.0.0
