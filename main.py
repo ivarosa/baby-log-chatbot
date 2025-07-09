@@ -12,6 +12,8 @@ import threading
 import time
 from apscheduler.schedulers.background import BackgroundScheduler
 from twilio.rest import Client
+from gpt_model_config import estimate_calories_openai  # <-- Import your function here
+
 
 # Initialize FastAPI app
 app = FastAPI(title="Baby Log WhatsApp Chatbot", version="1.0.0")
@@ -776,6 +778,7 @@ def start_reminder_scheduler():
 
 # Continue with all your existing functions...
 def save_mpasi(user, data):
+    print(f"[DB] Saving MPASI for {user}: {data}")  # For debugging/logging
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
     
@@ -785,7 +788,15 @@ def save_mpasi(user, data):
         c.execute(f'''
             INSERT INTO mpasi_log ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+        ''', (
+            user,
+            data['date'],
+            data['time'],
+            data['volume_ml'],
+            data['food_detail'],
+            data['food_grams'],
+            data.get('est_calories')
+        ))
         conn.commit()
         conn.close()
     else:
@@ -795,8 +806,17 @@ def save_mpasi(user, data):
         c.execute(f'''
             INSERT INTO mpasi_log ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+        ''', (
+            user,
+            data['date'],
+            data['time'],
+            data['volume_ml'],
+            data['food_detail'],
+            data['food_grams'],
+            data.get('est_calories')
+        ))
         conn.commit()
+        conn.close()
         conn.close()
 
 def get_mpasi_summary(user, period_start=None, period_end=None):
@@ -1110,6 +1130,16 @@ def format_summary_message(data, summary_date):
         "Ketik 'detail [aktivitas]' untuk info lebih lanjut."
     ]
     return "\n".join(lines)
+
+def extract_total_calories(gpt_summary):
+    """
+    Extracts the total calories from the GPT summary if possible.
+    Assumes summary contains a line like 'Total: 220 kkal'
+    """
+    import re
+    match = re.search(r"Total:\s*(\d+)\s*kkal", gpt_summary or "", re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
 
 # Health check endpoint for Railway
 @app.get("/health")
@@ -1664,7 +1694,8 @@ Apakah sudah benar? (ya/tidak)"""
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
+
+        # Tanggal Makan
         elif session["state"] == "MPASI_DATE":
             if msg.lower().strip() == "today":
                 session["data"]["date"] = datetime.now().strftime("%Y-%m-%d")
@@ -1681,7 +1712,8 @@ Apakah sudah benar? (ya/tidak)"""
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
+
+        # Jam Makan
         elif session["state"] == "MPASI_TIME":
             time_input = msg.replace('.', ':')
             if re.match(r"^\d{2}:\d{2}$", time_input):
@@ -1697,7 +1729,8 @@ Apakah sudah benar? (ya/tidak)"""
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
+
+        # Volume Makan
         elif session["state"] == "MPASI_VOL":
             try:
                 session["data"]["volume_ml"] = float(msg)
@@ -1708,38 +1741,43 @@ Apakah sudah benar? (ya/tidak)"""
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
+
+        # Detail Makanan
         elif session["state"] == "MPASI_DETAIL":
             session["data"]["food_detail"] = msg
             session["state"] = "MPASI_GRAMS"
-            reply = "Masukkan gram per item (cth: nasi:50, ayam:30, wortel:20), atau 'skip'."
+            reply = "Masukkan menu dan porsi MPASI (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
+
+        # Gram/Berat/Estimasi Kalori
         elif session["state"] == "MPASI_GRAMS":
             if msg.lower() != "skip":
                 session["data"]["food_grams"] = msg
-                try:
-                    session["data"]["est_calories"] = sum([float(x.split(":")[1]) for x in msg.split(",") if ":" in x])
-                except Exception:
-                    session["data"]["est_calories"] = None
+                gpt_summary = estimate_calories_openai(msg)
+                session["data"]["gpt_calorie_summary"] = gpt_summary
+                # Optionally, you may parse/estimate total calories from gpt_summary here if needed
+                session["data"]["est_calories"] = extract_total_calories(gpt_summary)
             else:
                 session["data"]["food_grams"] = ""
+                session["data"]["gpt_calorie_summary"] = ""
                 session["data"]["est_calories"] = None
             save_mpasi(user, session["data"])
+            reply = f"Catat MPASI tersimpan!\n{session['data'].get('gpt_calorie_summary', '')}"
+            # Reset session
             session["state"] = None
             session["data"] = {}
-            reply = "catat mpasi tersimpan! Untuk ringkasan, ketik: lihat ringkasan mpasi"
             user_sessions[user] = session
             resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
-        
+            return Response(str(resp), media_type="text/plain")
+
+        # Lihat Ringkasan
         elif msg.lower().startswith("lihat ringkasan mpasi"):
             rows = get_mpasi_summary(user)
             if rows:
                 total_ml = sum([row[2] for row in rows])
-                total_cal = sum([row[5] or 0 for row in rows])
+                total_cal = sum([row[6] or 0 for row in rows])  # Assuming est_calories is at index 6
                 reply = f"Ringkasan MPASI:\nTotal makan: {len(rows)}\nTotal ml: {total_ml}\nEstimasi total kalori: {total_cal}\n"
             else:
                 reply = "Belum ada catat mpasi. Ketik 'catat mpasi' untuk menambah data."
@@ -1749,25 +1787,57 @@ Apakah sudah benar? (ya/tidak)"""
 
         # ---- Flow 4: Pengingat Kalori ----
         elif msg.lower() == "lihat kalori":
-            rows = get_mpasi_summary(user)
-            total_cal = sum([row[5] or 0 for row in rows])
-            reply = f"Total kalori yang dicatat: {total_cal} kkal"
+            # Calculate total calories from both MPASI and susu for today
+            today = datetime.now().strftime("%Y-%m-%d")
+            mpasi_rows = get_mpasi_summary(user, today, today)
+            susu_rows = get_milk_intake_summary(user, today, today)
+            total_cal_mpasi = sum([row[5] or 0 for row in mpasi_rows])
+            total_cal_susu = sum([r[4] or 0 for r in susu_rows])
+            reply = (
+                f"Total kalori hari ini:\n"
+                f"- MPASI: {total_cal_mpasi} kkal\n"
+                f"- Susu: {total_cal_susu} kkal\n"
+                f"Total: {total_cal_mpasi + total_cal_susu} kkal"
+            )
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
         elif msg.lower() == "daftar asupan":
-            rows = get_mpasi_summary(user)
+            # Aggregate all foods and milk types for today
+            today = datetime.now().strftime("%Y-%m-%d")
+            mpasi_rows = get_mpasi_summary(user, today, today)
+            susu_rows = get_milk_intake_summary(user, today, today)
             foods = []
-            for row in rows:
-                foods += [i.strip() for i in row[3].split(",")]
-            reply = "Daftar asupan:\n" + ", ".join(set(foods)) if foods else "Belum ada makanan tercatat."
+            for row in mpasi_rows:
+                if row[3]:
+                    foods += [i.strip() for i in row[3].split(",")]
+            milk_types = [r[0] for r in susu_rows if r[0]]
+            all_items = list(set(foods + milk_types))
+            reply = "Daftar asupan hari ini:\n" + (", ".join(all_items) if all_items else "Belum ada makanan/susu tercatat.")
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
         elif msg.lower() == "persentase asupan":
-            reply = "Contoh: MPASI 70%, ASI/Susu 30% (untuk perhitungan riil, lengkapi log makanan & susu)."
+            # Calculate proportion of calories from MPASI vs susu
+            today = datetime.now().strftime("%Y-%m-%d")
+            mpasi_rows = get_mpasi_summary(user, today, today)
+            susu_rows = get_milk_intake_summary(user, today, today)
+            total_cal_mpasi = sum([row[5] or 0 for row in mpasi_rows])
+            total_cal_susu = sum([r[4] or 0 for r in susu_rows])
+            total_kalori = total_cal_mpasi + total_cal_susu
+            if total_kalori > 0:
+                persen_mpasi = int(total_cal_mpasi / total_kalori * 100)
+                persen_susu = 100 - persen_mpasi
+                reply = (
+                    f"Persentase asupan hari ini:\n"
+                    f"- MPASI: {persen_mpasi}%\n"
+                    f"- Susu: {persen_susu}%\n"
+                    f"(MPASI: {total_cal_mpasi} kkal, Susu: {total_cal_susu} kkal)"
+                )
+            else:
+                reply = "Belum ada log makanan/susu hari ini."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
