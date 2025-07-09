@@ -2,9 +2,14 @@ import os
 import openai
 
 def estimate_calories_openai(food_log: str) -> str:
+    """
+    Estimate calories using OpenAI chat API for a given food log.
+    Returns a string with details or an error message.
+    """
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return "API key for OpenAI not set."
+
     prompt = (
         "Tolong hitung estimasi total kalori dari makanan berikut untuk bayi.\n"
         "Sebutkan juga rincian kalori per bahan. Jawab singkat dengan format berikut:\n"
@@ -12,13 +17,20 @@ def estimate_calories_openai(food_log: str) -> str:
         "Total: [total kalori] kkal\n\n"
         f"Makanan: {food_log}"
     )
+
     try:
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
             messages=[
-                {"role": "system", "content": "Kamu adalah ahli nutrisi makanan bayi dan MPASI."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "Kamu adalah ahli nutrisi makanan bayi dan MPASI."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
             max_tokens=256,
             temperature=0.2,
