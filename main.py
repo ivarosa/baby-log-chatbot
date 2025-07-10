@@ -1268,7 +1268,7 @@ PANDUAN_MESSAGE = (
 
 # Your existing webhook handler (unchanged except for cost control integration)
 @app.post("/webhook")
-async def whatsapp_webhook(request: Request):
+async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
     user = None
     try:
         form = await request.form()
