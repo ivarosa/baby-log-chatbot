@@ -12,6 +12,7 @@ import threading
 import time
 from apscheduler.schedulers.background import BackgroundScheduler
 from twilio.rest import Client
+from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 
 logging.basicConfig(
@@ -1141,18 +1142,21 @@ def extract_total_calories(gpt_summary):
     return int(match.group(1)) if match else None
 
 def send_calorie_summary(user, food_grams):
-    import logging
-    logging.info(f"send_calorie_summary called for {user} with food_grams: {food_grams}")  # <-- put here!
+    """
+    Background task to estimate calories using OpenAI and send the result via Twilio WhatsApp.
+    Logs all key actions and errors for easy debugging.
+    """
+    logging.info(f"send_calorie_summary called for {user} with food_grams: {food_grams}")
     try:
-        from gpt_model_config import estimate_calories_openai
-        from send_twilio_message import send_twilio_message
         summary = estimate_calories_openai(food_grams)
         send_twilio_message(user, f"Hasil estimasi kalori MPASI:\n{summary}")
         logging.info(f"Calorie summary sent to {user}: {summary}")
     except Exception as e:
         logging.exception(f"Error in send_calorie_summary for user {user}: {e}")
-        send_twilio_message(user, "Maaf, terjadi kesalahan teknis saat menghitung kalori MPASI. Silakan coba lagi nanti.")
-
+        send_twilio_message(
+            user,
+            "Maaf, terjadi kesalahan teknis saat menghitung kalori MPASI. Silakan coba lagi nanti."
+        )
 
 # Health check endpoint for Railway
 @app.get("/health")
