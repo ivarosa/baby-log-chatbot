@@ -2,7 +2,7 @@ import os
 import psycopg
 from psycopg.rows import dict_row
 from urllib.parse import urlparse
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 from datetime import datetime, date, timedelta
@@ -1140,6 +1140,12 @@ def extract_total_calories(gpt_summary):
     match = re.search(r"Total:\s*(\d+)\s*kkal", gpt_summary or "", re.IGNORECASE)
     return int(match.group(1)) if match else None
 
+def send_calorie_summary(user, food_grams):
+    from gpt_model_config import estimate_calories_openai
+    from send_twilio_message import send_twilio_message
+    summary = estimate_calories_openai(food_grams)
+    send_twilio_message(user, f"Hasil estimasi kalori MPASI:\n{summary}")
+
 
 # Health check endpoint for Railway
 @app.get("/health")
@@ -1755,10 +1761,12 @@ Apakah sudah benar? (ya/tidak)"""
         elif session["state"] == "MPASI_GRAMS":
             if msg.lower() != "skip":
                 session["data"]["food_grams"] = msg
-                gpt_summary = estimate_calories_openai(msg)
-                session["data"]["gpt_calorie_summary"] = gpt_summary
-                # Optionally, you may parse/estimate total calories from gpt_summary here if needed
-                session["data"]["est_calories"] = extract_total_calories(gpt_summary)
+                # 1. Reply instantly
+                resp.message("Sedang menghitung kalori, tunggu sebentar...")
+                # 2. Launch background OpenAI + Twilio task
+                background_tasks.add_task(
+                    send_calorie_summary, user, session["data"]["food_grams"]
+                )
             else:
                 session["data"]["food_grams"] = ""
                 session["data"]["gpt_calorie_summary"] = ""
