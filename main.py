@@ -655,37 +655,6 @@ def get_user_reminders(user, active_only=True):
         conn.close()
         return rows
 
-def send_twilio_message(to_number, message_body):
-    """Send WhatsApp message via Twilio with cost control"""
-    try:
-        if not can_send_reminder(to_number):
-            logging.info(f"User {to_number} reached daily limit")
-            return False
-        
-        account_sid = os.environ.get('TWILIO_ACCOUNT_SID')
-        auth_token = os.environ.get('TWILIO_AUTH_TOKEN')
-        from_number = os.environ.get('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238886')
-        
-        if not account_sid or not auth_token:
-            logging.error("Twilio credentials not configured")
-            return False
-        
-        client = Client(account_sid, auth_token)
-        
-        message = client.messages.create(
-            body=message_body,
-            from_=from_number,
-            to=to_number
-        )
-        
-        increment_message_count(to_number)
-        logging.info(f"Reminder sent to {to_number}: {message.sid}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Failed to send reminder: {e}")
-        return False
-
 def check_and_send_reminders():
     """Background function to check and send due reminders"""
     database_url = os.environ.get('DATABASE_URL')
