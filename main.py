@@ -14,15 +14,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from twilio.rest import Client
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 # Initialize FastAPI app
 app = FastAPI(title="Baby Log WhatsApp Chatbot", version="1.0.0")
 user_sessions = {}
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s"
-)
 
 # Database connection function - supports both SQLite (local) and PostgreSQL (Railway)
 def get_db_connection():
