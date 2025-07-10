@@ -6,7 +6,6 @@ def estimate_calories_openai(food_log: str) -> str:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return "API key for OpenAI not set."
-
     prompt = (
         "Tolong hitung estimasi total kalori dari makanan berikut untuk bayi.\n"
         "Sebutkan juga rincian kalori per bahan. Jawab singkat dengan format berikut:\n"
@@ -14,21 +13,14 @@ def estimate_calories_openai(food_log: str) -> str:
         "Total: [total kalori] kkal\n\n"
         f"Makanan: {food_log}"
     )
-
     try:
         t0 = time.time()
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),  # Try this model for speed
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
             messages=[
-                {
-                    "role": "system",
-                    "content": "Kamu adalah ahli nutrisi makanan bayi dan MPASI."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "system", "content": "Kamu adalah ahli nutrisi makanan bayi dan MPASI."},
+                {"role": "user", "content": prompt}
             ],
             max_tokens=256,
             temperature=0.2,
