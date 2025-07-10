@@ -1,11 +1,8 @@
 import os
 import openai
+import time
 
 def estimate_calories_openai(food_log: str) -> str:
-    """
-    Estimate calories using OpenAI chat API for a given food log.
-    Returns a string with details or an error message.
-    """
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return "API key for OpenAI not set."
@@ -19,9 +16,10 @@ def estimate_calories_openai(food_log: str) -> str:
     )
 
     try:
+        t0 = time.time()
         client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),  # Try this model for speed
             messages=[
                 {
                     "role": "system",
@@ -35,6 +33,8 @@ def estimate_calories_openai(food_log: str) -> str:
             max_tokens=256,
             temperature=0.2,
         )
+        t1 = time.time()
+        print(f"[DEBUG] OpenAI call took {t1 - t0:.2f} seconds")
         answer = response.choices[0].message.content
         return answer
     except Exception as e:
