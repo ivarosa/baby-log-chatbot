@@ -14,6 +14,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from twilio.rest import Client
 from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
+import pytz
+
+DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
 logging.basicConfig(
     level=logging.INFO,
@@ -663,25 +666,27 @@ def check_and_send_reminders():
     user_col = 'user_phone' if database_url else 'user'
     
     try:
+        now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+        now_local = now_utc.astimezone(DEFAULT_TIMEZONE)
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
-            now = datetime.now()
+            # Compare next_due in UTC
             c.execute(f'''
                 SELECT * FROM milk_reminders 
                 WHERE is_active=TRUE AND next_due <= %s
-            ''', (now,))
+            ''', (now_utc,))
             due_reminders = c.fetchall()
             conn.close()
         else:
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
-            now = datetime.now()
+            # SQLite stores naive datetime, so use local time
             c.execute(f'''
                 SELECT * FROM milk_reminders 
                 WHERE is_active=1 AND next_due <= ?
-            ''', (now,))
+            ''', (now_local,))
             due_reminders = c.fetchall()
             conn.close()
         
@@ -692,47 +697,54 @@ def check_and_send_reminders():
                 user = reminder['user_phone']
                 reminder_id = reminder['id']
                 reminder_name = reminder['reminder_name']
+                interval = reminder['interval_hours']
             else:
                 user = reminder[1]
                 reminder_id = reminder[0]
                 reminder_name = reminder[2]
+                interval = reminder[3]
             
             user_info = get_user_tier(user)
             remaining = 2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'
             
             message = f"""🍼 Pengingat: {reminder_name}
-
-⏰ Waktunya minum susu!
-
-Balas cepat:
-• 'done 120ml' - catat minum
-• 'snooze 30' - tunda 30 menit  
-• 'skip' - lewati
-
-💡 Sisa pengingat hari ini: {remaining}"""
+                
+                ⏰ Waktunya minum susu!
+                
+                Balas cepat:
+                • 'done 120ml' - catat minum
+                • 'snooze 30' - tunda 30 menit  
+                • 'skip' - lewati
+                
+                💡 Sisa pengingat hari ini: {remaining}"""
             
             if send_twilio_message(user, message):
-                # Update next due time (simplified)
-                next_due = datetime.now() + timedelta(hours=3)  # Default 3 hour interval
+                # Calculate next_due based on user's timezone and interval_hours
                 if database_url:
+                    # Save next_due in UTC
+                    next_due_utc = now_utc + timedelta(hours=interval)
+                    last_sent_utc = now_utc
                     conn = get_db_connection()
                     c = conn.cursor()
                     c.execute('UPDATE milk_reminders SET next_due=%s, last_sent=%s WHERE id=%s',
-                             (next_due, datetime.now(), reminder_id))
+                             (next_due_utc, last_sent_utc, reminder_id))
                     conn.commit()
                     conn.close()
                 else:
+                    # Save next_due in local time for SQLite
+                    next_due_local = now_local + timedelta(hours=interval)
+                    last_sent_local = now_local
                     import sqlite3
                     conn = sqlite3.connect('babylog.db')
                     c = conn.cursor()
                     c.execute('UPDATE milk_reminders SET next_due=?, last_sent=? WHERE id=?',
-                             (next_due, datetime.now(), reminder_id))
+                             (next_due_local, last_sent_local, reminder_id))
                     conn.commit()
                     conn.close()
             
     except Exception as e:
         logging.error(f"Error checking reminders: {e}")
-
+        
 def start_reminder_scheduler():
     """Start background thread for reminder checking"""
     def reminder_worker():
