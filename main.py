@@ -136,6 +136,7 @@ def init_db():
                 food_detail TEXT,
                 food_grams TEXT,
                 est_calories REAL,
+                gpt_calorie_summary TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )''',
             '''CREATE TABLE IF NOT EXISTS poop_log (
@@ -253,6 +254,7 @@ def init_db():
                 food_detail TEXT,
                 food_grams TEXT,
                 est_calories REAL,
+                gpt_calorie_summary TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -1110,22 +1112,35 @@ def extract_total_calories(gpt_summary):
     match = re.search(r"Total:\s*(\d+)\s*kkal", gpt_summary or "", re.IGNORECASE)
     return int(match.group(1)) if match else None
 
-def send_calorie_summary(user, food_grams):
-    """
-    Background task to estimate calories using OpenAI and send the result via Twilio WhatsApp.
-    Logs all key actions and errors for easy debugging.
-    """
-    logging.info(f"send_calorie_summary called for {user} with food_grams: {food_grams}")
-    try:
-        summary = estimate_calories_openai(food_grams)
-        send_twilio_message(user, f"Hasil estimasi kalori MPASI:\n{summary}")
-        logging.info(f"Calorie summary sent to {user}: {summary}")
-    except Exception as e:
-        logging.exception(f"Error in send_calorie_summary for user {user}: {e}")
-        send_twilio_message(
-            user,
-            "Maaf, terjadi kesalahan teknis saat menghitung kalori MPASI. Silakan coba lagi nanti."
+def update_mpasi_with_calories(user, data, gpt_summary, est_calories):
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = 'user_phone' if database_url else 'user'
+    conn = get_db_connection()
+    c = conn.cursor()
+    if database_url:
+        c.execute(
+            f"""UPDATE mpasi_log SET gpt_calorie_summary=%s, est_calories=%s
+                WHERE {user_col}=%s AND date=%s AND time=%s""",
+            (gpt_summary, est_calories, user, data['date'], data['time'])
         )
+    else:
+        c.execute(
+            f"""UPDATE mpasi_log SET gpt_calorie_summary=?, est_calories=?
+                WHERE {user_col}=? AND date=? AND time=?""",
+            (gpt_summary, est_calories, user, data['date'], data['time'])
+        )
+    conn.commit()
+    conn.close()
+
+def send_calorie_summary_and_update(user, data):
+    try:
+        summary = estimate_calories_openai(data['food_grams'])
+        total = extract_total_calories(summary)
+        update_mpasi_with_calories(user, data, summary, total)
+        send_twilio_message(user, f"Hasil estimasi kalori MPASI:\n{summary}")
+    except Exception as e:
+        logging.error(f"Error in send_calorie_summary_and_update: {e}")
+        send_twilio_message(user, "Maaf, terjadi kesalahan saat menghitung kalori MPASI.")
 
 # Health check endpoint for Railway
 @app.get("/health")
@@ -1741,24 +1756,20 @@ Apakah sudah benar? (ya/tidak)"""
         elif session["state"] == "MPASI_GRAMS":
             if msg.lower() != "skip":
                 session["data"]["food_grams"] = msg
-                # 1. Reply instantly
-                resp.message("Sedang menghitung kalori, tunggu sebentar...")
-                # 2. Launch background OpenAI + Twilio task
                 background_tasks.add_task(
-                    send_calorie_summary, user, session["data"]["food_grams"]
+                    send_calorie_summary_and_update, user, session["data"].copy()
                 )
             else:
                 session["data"]["food_grams"] = ""
                 session["data"]["gpt_calorie_summary"] = ""
                 session["data"]["est_calories"] = None
             save_mpasi(user, session["data"])
-            reply = f"Catat MPASI tersimpan!\n{session['data'].get('gpt_calorie_summary', '')}"
-            # Reset session
+            reply = "Catat MPASI tersimpan! Silahkan cek di lihat ringkasan mpasi."
             session["state"] = None
             session["data"] = {}
             user_sessions[user] = session
             resp.message(reply)
-            return Response(str(resp), media_type="text/plain")
+            return Response(str(resp), media_type="application/xml")
 
         # Lihat Ringkasan
         elif msg.lower().startswith("lihat ringkasan mpasi"):
@@ -2223,6 +2234,15 @@ Apakah sudah benar? (ya/tidak)"""
         resp = MessagingResponse()
         resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
         return Response(str(resp), media_type="application/xml")
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        logging.info("Calling init_db() at startup...")
+        init_db()
+        logging.info("Database tables checked/created successfully.")
+    except Exception as e:
+        logging.error(f"Error in init_db() at startup: {e}")
 
 # For Railway: do NOT use reload, and always import app from main:app
 if __name__ == "__main__":
