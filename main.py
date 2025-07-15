@@ -2238,6 +2238,7 @@ Apakah sudah benar? (ya/tidak)"""
             return Response(str(resp), media_type="application/xml")
 
         # --- Milk Intake Summary ---
+        # --- Milk Intake Summary ---
         if msg.lower().startswith("lihat ringkasan susu") or msg.lower().startswith("ringkasan susu"):
             mdate = re.search(r"\d{4}-\d{2}-\d{2}", msg)
             if "today" in msg.lower():
@@ -2268,31 +2269,24 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.exception(f"Error in lihat ringkasan susu: {ex}")
                 resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
                 return Response(str(resp), media_type="application/xml")
-                
-                # Default response (updated with tier info if available)
+        
+        # Default response (updated with tier info if available)
         if os.environ.get('DATABASE_URL'):
             user_info = get_user_tier(user)
             tier_text = f"\n💡 Status: Tier {user_info['tier'].title()}\n📊 Pengingat tersisa hari ini: {2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'}"
-            else:
-                tier_text = ""
-                        
-                reply = (
-                        f"Selamat datang di Babylog! 🍼{tier_text}\n\n"
-                        "Ketik 'help' untuk melihat semua perintah.\n\n"
-                        "Mulai dengan:\n"
-                        "• tambah anak - daftarkan anak\n"
-                        "• set reminder susu - buat pengingat"
-                    )
-                user_sessions[user] = session
-                resp.message(reply)
-                return Response(str(resp), media_type="application/xml")
-
-    except Exception as exc:
-        logging.exception(f"Error in WhatsApp webhook for user {user}: {exc}")
-        resp = MessagingResponse()
-        resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
+        else:  # ← FIXED: proper if-else structure
+            tier_text = ""
+                
+        reply = (
+            f"Selamat datang di Babylog! 🍼{tier_text}\n\n"
+            "Ketik 'help' untuk melihat semua perintah.\n\n"
+            "Mulai dengan:\n"
+            "• tambah anak - daftarkan anak\n"
+            "• set reminder susu - buat pengingat"
+        )
+        user_sessions[user] = session
+        resp.message(reply)
         return Response(str(resp), media_type="application/xml")
-
 @app.on_event("startup")
 async def startup_event():
     try:
