@@ -1903,7 +1903,7 @@ Apakah sudah benar? (ya/tidak)"""
                     save_poop(user, session["data"])
                     session["state"] = None
                     session["data"] = {}
-                    reply = "Log pup tersimpan! Untuk melihat log, ketik: show poop log"
+                    reply = "Log pup tersimpan! Untuk melihat log, ketik: lihat riwayat bab"
                 else:
                     reply = "Masukkan angka 1-7 untuk skala Bristol."
             except ValueError:
@@ -1912,17 +1912,31 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
-        elif msg.lower() == "show poop log":
-            logs = get_poop_log(user)
-            if logs:
-                reply = "Log Pup Terbaru:\n"
-                for l in logs[::-1]:
-                    reply += f"{l[0]} {l[1]}, Skala Bristol: {l[2]}\n"
-            else:
-                reply = "Belum ada log pup. Ketik 'log poop' untuk menambah data."
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+        elif msg.lower() in ["show poop log", "lihat riwayat bab"]:
+            try:
+                logs = get_poop_log(user)
+                if logs:
+                    reply = "Log Pup Terbaru:\n"
+                    for l in logs:
+                        # Handle both dict-row (PostgreSQL) and tuple (SQLite)
+                        if isinstance(l, (list, tuple)):
+                            date_val, time_val, bristol = l[0], l[1], l[2]
+                        else:
+                            date_val = l.get('date', '-')
+                            time_val = l.get('time', '-')
+                            bristol = l.get('bristol_scale', '-')
+                        reply += f"{date_val} {time_val}, Skala Bristol: {bristol}\n"
+                else:
+                    reply = "Belum ada log pup. Ketik 'catat bab' untuk menambah data."
+                session["state"] = None
+                session["data"] = {}
+                user_sessions[user] = session
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            except Exception as ex:
+                logging.exception(f"Error in show poop log: {ex}")
+                resp.message("Maaf, terjadi kesalahan saat mengambil data log pup.")
+                return Response(str(resp), media_type="application/xml")
         
         # ---- Flow 6: Catat Pumping ASI ----
         elif msg.lower() == "catat pumping":
