@@ -947,14 +947,24 @@ def format_milk_summary(rows, summary_date):
     if not rows:
         return f"Belum ada catatan minum susu/ASI pada {summary_date}."
 
-    # Always use index, works for both tuple and dict-row (psycopg)
-    def get_idx(r, i, key):
+    # Handle both tuple (SQLite) and dict (PostgreSQL) results
+    total_count = 0
+    total_ml = 0
+    total_cal = 0
+    
+    for r in rows:
         if isinstance(r, (list, tuple)):
-            return r[i]
-        return r.get(key, 0)
-    total_count = sum([get_idx(r,2,'count') for r in rows])
-    total_ml    = sum([get_idx(r,3,'sum') or 0 for r in rows])
-    total_cal   = sum([get_idx(r,4,'sum_1') or 0 for r in rows])
+            # SQLite: [milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)]
+            total_count += r[2] or 0
+            total_ml += r[3] or 0
+            total_cal += r[4] or 0
+        else:
+            # PostgreSQL: dict-like object
+            # Get values by position since keys might be auto-generated
+            values = list(r.values())
+            total_count += values[2] if len(values) > 2 else 0
+            total_ml += values[3] if len(values) > 3 else 0
+            total_cal += values[4] if len(values) > 4 else 0
 
     lines = [
         f"📊 Ringkasan Minum Susu/ASI ({summary_date})",
@@ -966,17 +976,28 @@ def format_milk_summary(rows, summary_date):
     ]
 
     for r in rows:
-        milk_type = get_idx(r,0,'milk_type')
-        asi_method = get_idx(r,1,'asi_method')
-        count = get_idx(r,2,'count')
-        volume = get_idx(r,3,'sum')
-        calories = get_idx(r,4,'sum_1') or 0
+        if isinstance(r, (list, tuple)):
+            # SQLite
+            milk_type = r[0]
+            asi_method = r[1]
+            count = r[2]
+            volume = r[3]
+            calories = r[4] or 0
+        else:
+            # PostgreSQL
+            values = list(r.values())
+            milk_type = values[0] if len(values) > 0 else '-'
+            asi_method = values[1] if len(values) > 1 else ''
+            count = values[2] if len(values) > 2 else 0
+            volume = values[3] if len(values) > 3 else 0
+            calories = values[4] if len(values) > 4 else 0
+            
         if milk_type == 'asi':
             lines.append(f"ASI ({asi_method}): {count}x, {volume} ml")
         else:
             lines.append(f"Sufor: {count}x, {volume} ml (kalori: {calories} kkal)")
-    return "\n".join(lines)
 
+    return "\n".join(lines)
 def save_pumping(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
