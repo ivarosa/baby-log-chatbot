@@ -959,12 +959,15 @@ def format_milk_summary(rows, summary_date):
             total_ml += r[3] or 0
             total_cal += r[4] or 0
         else:
-            # PostgreSQL: dict-like object
-            # Get values by position since keys might be auto-generated
+            # PostgreSQL: dict-like object with specific keys
+            # The keys are usually the column names or auto-generated
+            keys = list(r.keys())
             values = list(r.values())
-            total_count += values[2] if len(values) > 2 else 0
-            total_ml += values[3] if len(values) > 3 else 0
-            total_cal += values[4] if len(values) > 4 else 0
+            
+            # Count is the 3rd value (index 2), volume is 4th (index 3), calories is 5th (index 4)
+            total_count += values[2] if len(values) > 2 and values[2] is not None else 0
+            total_ml += values[3] if len(values) > 3 and values[3] is not None else 0
+            total_cal += values[4] if len(values) > 4 and values[4] is not None else 0
 
     lines = [
         f"📊 Ringkasan Minum Susu/ASI ({summary_date})",
@@ -979,7 +982,7 @@ def format_milk_summary(rows, summary_date):
         if isinstance(r, (list, tuple)):
             # SQLite
             milk_type = r[0]
-            asi_method = r[1]
+            asi_method = r[1] or ""
             count = r[2]
             volume = r[3]
             calories = r[4] or 0
@@ -987,10 +990,16 @@ def format_milk_summary(rows, summary_date):
             # PostgreSQL
             values = list(r.values())
             milk_type = values[0] if len(values) > 0 else '-'
-            asi_method = values[1] if len(values) > 1 else ''
+            asi_method = values[1] if len(values) > 1 else ""
             count = values[2] if len(values) > 2 else 0
             volume = values[3] if len(values) > 3 else 0
             calories = values[4] if len(values) > 4 else 0
+            
+        # Handle None values
+        if asi_method is None:
+            asi_method = ""
+        if calories is None:
+            calories = 0
             
         if milk_type == 'asi':
             lines.append(f"ASI ({asi_method}): {count}x, {volume} ml")
@@ -998,6 +1007,7 @@ def format_milk_summary(rows, summary_date):
             lines.append(f"Sufor: {count}x, {volume} ml (kalori: {calories} kkal)")
 
     return "\n".join(lines)
+    
 def save_pumping(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
@@ -2239,7 +2249,15 @@ Apakah sudah benar? (ya/tidak)"""
             try:
                 logging.info(f"Fetching milk summary for user={user} date={summary_date}")
                 rows = get_milk_intake_summary(user, summary_date, summary_date)
-                logging.info(f"Rows returned: {pprint.pformat(rows)}")
+                logging.info(f"Rows returned: {len(rows)} rows")
+                
+                # DEBUG: Print each row structure
+                for i, row in enumerate(rows):
+                    logging.info(f"Row {i}: {type(row)} - {row}")
+                    if hasattr(row, 'keys'):
+                        logging.info(f"Row {i} keys: {list(row.keys())}")
+                        logging.info(f"Row {i} values: {list(row.values())}")
+                
                 reply = format_milk_summary(rows, summary_date)
                 session["state"] = None
                 session["data"] = {}
@@ -2250,24 +2268,24 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.exception(f"Error in lihat ringkasan susu: {ex}")
                 resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
                 return Response(str(resp), media_type="application/xml")
-
-        # Default response (updated with tier info if available)
+                
+                # Default response (updated with tier info if available)
         if os.environ.get('DATABASE_URL'):
             user_info = get_user_tier(user)
             tier_text = f"\n💡 Status: Tier {user_info['tier'].title()}\n📊 Pengingat tersisa hari ini: {2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'}"
-        else:
-            tier_text = ""
-            
-        reply = (
-            f"Selamat datang di Babylog! 🍼{tier_text}\n\n"
-            "Ketik 'help' untuk melihat semua perintah.\n\n"
-            "Mulai dengan:\n"
-            "• tambah anak - daftarkan anak\n"
-            "• set reminder susu - buat pengingat"
-        )
-        user_sessions[user] = session
-        resp.message(reply)
-        return Response(str(resp), media_type="application/xml")
+            else:
+                tier_text = ""
+                        
+                reply = (
+                        f"Selamat datang di Babylog! 🍼{tier_text}\n\n"
+                        "Ketik 'help' untuk melihat semua perintah.\n\n"
+                        "Mulai dengan:\n"
+                        "• tambah anak - daftarkan anak\n"
+                        "• set reminder susu - buat pengingat"
+                    )
+                user_sessions[user] = session
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
 
     except Exception as exc:
         logging.exception(f"Error in WhatsApp webhook for user {user}: {exc}")
