@@ -2217,6 +2217,10 @@ Apakah sudah benar? (ya/tidak)"""
             
             elif session["state"] == "MILK_NOTE":
                 session["data"]["note"] = "" if msg.lower() == "skip" else msg
+                # PATCH: Always ensure sufor_calorie is set for sufor entries
+                if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
+                    user_kcal = get_user_calorie_setting(user)
+                    session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
                 save_milk_intake(user, session["data"])
                 if session["data"]["milk_type"] == "sufor":
                     extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
