@@ -946,16 +946,16 @@ def get_milk_intake_summary(user, period_start=None, period_end=None):
 def format_milk_summary(rows, summary_date):
     if not rows:
         return f"Belum ada catatan minum susu/ASI pada {summary_date}."
-    
-    if hasattr(rows[0], 'keys'):  # PostgreSQL dict-like result
-        total_count = sum([r['count'] for r in rows])
-        total_ml = sum([r['sum'] or 0 for r in rows])
-        total_cal = sum([r['sum_1'] or 0 for r in rows])
-    else:  # SQLite tuple result
-        total_count = sum([r[2] for r in rows])
-        total_ml = sum([r[3] for r in rows])
-        total_cal = sum([r[4] or 0 for r in rows])
-    
+
+    # Always use index, works for both tuple and dict-row (psycopg)
+    def get_idx(r, i, key):
+        if isinstance(r, (list, tuple)):
+            return r[i]
+        return r.get(key, 0)
+    total_count = sum([get_idx(r,2,'count') for r in rows])
+    total_ml    = sum([get_idx(r,3,'sum') or 0 for r in rows])
+    total_cal   = sum([get_idx(r,4,'sum_1') or 0 for r in rows])
+
     lines = [
         f"📊 Ringkasan Minum Susu/ASI ({summary_date})",
         "",
@@ -964,26 +964,17 @@ def format_milk_summary(rows, summary_date):
         f"• Total kalori (perkiraan): {total_cal} kkal",
         ""
     ]
-    
+
     for r in rows:
-        if hasattr(r, 'keys'):  # PostgreSQL
-            milk_type = r['milk_type']
-            asi_method = r['asi_method']
-            count = r['count']
-            volume = r['sum']
-            calories = r['sum_1'] or 0
-        else:  # SQLite
-            milk_type = r[0]
-            asi_method = r[1]
-            count = r[2]
-            volume = r[3]
-            calories = r[4] or 0
-            
+        milk_type = get_idx(r,0,'milk_type')
+        asi_method = get_idx(r,1,'asi_method')
+        count = get_idx(r,2,'count')
+        volume = get_idx(r,3,'sum')
+        calories = get_idx(r,4,'sum_1') or 0
         if milk_type == 'asi':
             lines.append(f"ASI ({asi_method}): {count}x, {volume} ml")
         else:
             lines.append(f"Sufor: {count}x, {volume} ml (kalori: {calories} kkal)")
-    
     return "\n".join(lines)
 
 def save_pumping(user, data):
@@ -1308,9 +1299,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp.message(PANDUAN_MESSAGE)
             return Response(str(resp), media_type="application/xml")
 
-        # Reminder Commands (adapted from your original)
-        if msg.lower().strip() in ["set reminder susu", "atur pengingat susu"]:
-            # Check tier limits for Railway users
+        # Reminder Commands
+        if msg.lower() in ["set reminder susu", "atur pengingat susu"]:
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
                 if user_info['tier'] == 'free':
@@ -2212,18 +2202,17 @@ Apakah sudah benar? (ya/tidak)"""
             else:
                 summary_date = date.today().isoformat()
             try:
+                logging.info(f"Fetching milk summary for user={user} date={summary_date}")
                 rows = get_milk_intake_summary(user, summary_date, summary_date)
-                if rows:
-                    reply = format_milk_summary(rows, summary_date)
-                else:
-                    reply = f"Belum ada catatan minum susu/ASI pada {summary_date}."
+                logging.info(f"Rows returned: {pprint.pformat(rows)}")
+                reply = format_milk_summary(rows, summary_date)
                 session["state"] = None
                 session["data"] = {}
                 user_sessions[user] = session
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             except Exception as ex:
-                logging.exception("Error in lihat ringkasan susu")
+                logging.exception(f"Error in lihat ringkasan susu: {ex}")
                 resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
                 return Response(str(resp), media_type="application/xml")
 
