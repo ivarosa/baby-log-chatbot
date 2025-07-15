@@ -1294,22 +1294,22 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             return Response(str(resp), media_type="application/xml")
 
         # 1. Welcome: greet on initial keywords
-        if msg in ["start", "mulai", "hi", "halo", "assalamualaikum"]:
+        if msg.lower() in ["start", "mulai", "hi", "halo", "assalamualaikum"]:
             resp.message(WELCOME_MESSAGE)
             return Response(str(resp), media_type="application/xml")
 
         # 2. Help section
-        if msg in ["help", "bantuan"]:
+        if msg.lower() in ["help", "bantuan"]:
             resp.message(HELP_MESSAGE)
             return Response(str(resp), media_type="application/xml")
 
         # 3. Guideline section
-        if msg in ["panduan", "guide", "commands", "perintah"]:
+        if msg.lower() in ["panduan", "guide", "commands", "perintah"]:
             resp.message(PANDUAN_MESSAGE)
             return Response(str(resp), media_type="application/xml")
 
         # Reminder Commands (adapted from your original)
-        if msg.lower() in ["set reminder susu", "atur pengingat susu"]:
+        if msg.lower().strip() in ["set reminder susu", "atur pengingat susu"]:
             # Check tier limits for Railway users
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
@@ -1319,7 +1319,6 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                         reply = "🚫 Tier gratis dibatasi 3 pengingat aktif. Upgrade ke premium untuk unlimited!"
                         resp.message(reply)
                         return Response(str(resp), media_type="application/xml")
-            
             session["state"] = "REMINDER_NAME"
             session["data"] = {}
             reply = "Nama pengingat? (contoh: ASI pagi, Sufor malam, ASI reguler)"
@@ -1854,7 +1853,7 @@ Apakah sudah benar? (ya/tidak)"""
             return Response(str(resp), media_type="application/xml")
         
         # ---- Flow 5: Catat Pup ----
-        elif msg.lower() == "log poop":
+        elif msg.lower() in ["log poop", "catat bab"]:
             session["state"] = "POOP_DATE"
             session["data"] = {}
             reply = "Tanggal? (YYYY-MM-DD, atau 'today')"
@@ -2205,13 +2204,14 @@ Apakah sudah benar? (ya/tidak)"""
 
         # --- Milk Intake Summary ---
         if msg.lower().startswith("lihat ringkasan susu") or msg.lower().startswith("ringkasan susu"):
-            m = re.search(r"(summary|ringkasan) susu\s*(today|\d{4}-\d{2}-\d{2})?", msg.lower())
-            if m:
-                if "today" in msg.lower():
-                    summary_date = date.today().isoformat()
-                else:
-                    mdate = re.search(r"\d{4}-\d{2}-\d{2}", msg)
-                    summary_date = mdate.group(0) if mdate else date.today().isoformat()
+            mdate = re.search(r"\d{4}-\d{2}-\d{2}", msg)
+            if "today" in msg.lower():
+                summary_date = date.today().isoformat()
+            elif mdate:
+                summary_date = mdate.group(0)
+            else:
+                summary_date = date.today().isoformat()
+            try:
                 rows = get_milk_intake_summary(user, summary_date, summary_date)
                 if rows:
                     reply = format_milk_summary(rows, summary_date)
@@ -2221,6 +2221,10 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"] = {}
                 user_sessions[user] = session
                 resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            except Exception as ex:
+                logging.exception("Error in lihat ringkasan susu")
+                resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
                 return Response(str(resp), media_type="application/xml")
 
         # Default response (updated with tier info if available)
