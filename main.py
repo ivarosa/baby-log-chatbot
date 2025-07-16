@@ -660,18 +660,28 @@ def get_user_reminders(user, active_only=True):
         conn.close()
         return rows
 
+def time_in_range(start_str, end_str, check_time):
+    """Check if check_time (datetime) is within start and end (HH:MM strings) in local time."""
+    start_hour, start_minute = map(int, start_str.split(":"))
+    end_hour, end_minute = map(int, end_str.split(":"))
+    start_time = check_time.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+    end_time = check_time.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+    if start_time <= end_time:
+        return start_time <= check_time <= end_time
+    else:  # Over midnight
+        return check_time >= start_time or check_time <= end_time
+
 def check_and_send_reminders():
-    """Background function to check and send due reminders"""
+    """Background function to check and send due reminders (PATCHED)"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+
     try:
         now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
         now_local = now_utc.astimezone(DEFAULT_TIMEZONE)
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
-            # Compare next_due in UTC
             c.execute(f'''
                 SELECT * FROM milk_reminders 
                 WHERE is_active=TRUE AND next_due <= %s
@@ -682,7 +692,6 @@ def check_and_send_reminders():
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
-            # SQLite stores naive datetime, so use local time
             c.execute(f'''
                 SELECT * FROM milk_reminders 
                 WHERE is_active=1 AND next_due <= ?
@@ -691,19 +700,27 @@ def check_and_send_reminders():
             conn.close()
         
         logging.info(f"Found {len(due_reminders)} due reminders")
-        
+
         for reminder in due_reminders:
             if database_url:
                 user = reminder['user_phone']
                 reminder_id = reminder['id']
                 reminder_name = reminder['reminder_name']
                 interval = reminder['interval_hours']
+                start_str = reminder['start_time']
+                end_str = reminder['end_time']
+                # next_due is in UTC
+                next_due = reminder['next_due'].astimezone(DEFAULT_TIMEZONE)
             else:
                 user = reminder[1]
                 reminder_id = reminder[0]
                 reminder_name = reminder[2]
                 interval = reminder[3]
-            
+                start_str = reminder[4]
+                end_str = reminder[5]
+                # next_due is naive local
+                next_due = reminder[8]  # next_due
+
             user_info = get_user_tier(user)
             remaining = 2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'
             
@@ -717,31 +734,55 @@ def check_and_send_reminders():
                 • 'skip' - lewati
                 
                 💡 Sisa pengingat hari ini: {remaining}"""
-            
-            if send_twilio_message(user, message):
-                # Calculate next_due based on user's timezone and interval_hours
-                if database_url:
-                    # Save next_due in UTC
-                    next_due_utc = now_utc + timedelta(hours=interval)
-                    last_sent_utc = now_utc
-                    conn = get_db_connection()
-                    c = conn.cursor()
-                    c.execute('UPDATE milk_reminders SET next_due=%s, last_sent=%s WHERE id=%s',
-                             (next_due_utc, last_sent_utc, reminder_id))
-                    conn.commit()
-                    conn.close()
-                else:
-                    # Save next_due in local time for SQLite
-                    next_due_local = now_local + timedelta(hours=interval)
-                    last_sent_local = now_local
-                    import sqlite3
-                    conn = sqlite3.connect('babylog.db')
-                    c = conn.cursor()
-                    c.execute('UPDATE milk_reminders SET next_due=?, last_sent=? WHERE id=?',
-                             (next_due_local, last_sent_local, reminder_id))
-                    conn.commit()
-                    conn.close()
-            
+
+            # Only send if inside allowed time window
+            now_for_check = now_utc.astimezone(DEFAULT_TIMEZONE) if database_url else now_local
+            if not time_in_range(start_str, end_str, now_for_check):
+                # Skip sending, but update next_due below
+                logging.info(f"Skipping reminder for user={user} at {now_for_check}, outside {start_str}-{end_str}")
+                send_this = False
+            else:
+                send_this = True
+
+            if send_this and send_twilio_message(user, message):
+                logging.info(f"Sent reminder to {user} at {now_for_check}")
+            else:
+                logging.info(f"Not sending reminder message to {user} at {now_for_check}")
+
+            # Calculate the next due time
+            # Step 1: add interval
+            if database_url:
+                new_next_due = now_for_check + timedelta(hours=interval)
+            else:
+                new_next_due = now_for_check + timedelta(hours=interval)
+
+            # Step 2: if new_next_due is outside allowed window, set to next day's start_time
+            if not time_in_range(start_str, end_str, new_next_due):
+                # Move to next day's start_time
+                next_start = (new_next_due + timedelta(days=1)).replace(hour=int(start_str[:2]), minute=int(start_str[3:5]), second=0, microsecond=0)
+                new_next_due = next_start
+
+            # Step 3: save new_next_due (convert to UTC if database_url)
+            if database_url:
+                next_due_save = new_next_due.astimezone(pytz.utc)
+                last_sent_save = now_utc
+                conn = get_db_connection()
+                c = conn.cursor()
+                c.execute('UPDATE milk_reminders SET next_due=%s, last_sent=%s WHERE id=%s',
+                        (next_due_save, last_sent_save, reminder_id))
+                conn.commit()
+                conn.close()
+            else:
+                next_due_save = new_next_due  # naive local
+                last_sent_save = now_local
+                import sqlite3
+                conn = sqlite3.connect('babylog.db')
+                c = conn.cursor()
+                c.execute('UPDATE milk_reminders SET next_due=?, last_sent=? WHERE id=?',
+                        (next_due_save, last_sent_save, reminder_id))
+                conn.commit()
+                conn.close()
+
     except Exception as e:
         logging.error(f"Error checking reminders: {e}")
         
