@@ -1807,8 +1807,15 @@ Apakah sudah benar? (ya/tidak)"""
         elif msg.lower().startswith("lihat ringkasan mpasi"):
             rows = get_mpasi_summary(user)
             if rows:
-                total_ml = sum([row[2] for row in rows])
-                total_cal = sum([row[6] or 0 for row in rows])  # Assuming est_calories is at index 6
+                total_ml = 0
+                total_cal = 0
+                for row in rows:
+                    if isinstance(row, (list, tuple)):
+                        total_ml += row[2] or 0
+                        total_cal += row[5] or 0
+                    else:
+                        total_ml += row.get("volume_ml", 0) or 0
+                        total_cal += row.get("est_calories", 0) or 0
                 reply = f"Ringkasan MPASI:\nTotal makan: {len(rows)}\nTotal ml: {total_ml}\nEstimasi total kalori: {total_cal}\n"
             else:
                 reply = "Belum ada catat mpasi. Ketik 'catat mpasi' untuk menambah data."
