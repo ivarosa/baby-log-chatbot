@@ -2237,9 +2237,6 @@ Apakah sudah benar? (ya/tidak)"""
                 user_sessions[user] = session
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
 
         # --- Milk Intake Summary ---
         # --- Milk Intake Summary ---
