@@ -15,6 +15,9 @@ from twilio.rest import Client
 from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 import pytz
+from mpasi_milk_chart import generate_mpasi_milk_chart
+from generate_report import generate_pdf_report
+from fastapi.responses import StreamingResponse
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -1216,6 +1219,43 @@ def send_calorie_summary_and_update(user, data):
     except Exception as e:
         logging.error(f"Error in send_calorie_summary_and_update: {e}")
         send_twilio_message(user, "Maaf, terjadi kesalahan saat menghitung kalori MPASI.")
+
+def get_mpasi_milk_data(user_phone):
+    from datetime import date, timedelta
+
+    today = date.today()
+    days = [(today - timedelta(days=i)).isoformat() for i in reversed(range(7))]
+    data = []
+    for d in days:
+        # Aggregate MPASI
+        mpasi_rows = get_mpasi_summary(user_phone, d, d)
+        mpasi_ml = sum([row[2] or 0 for row in mpasi_rows])
+        mpasi_kcal = sum([row[5] or 0 for row in mpasi_rows])
+        # Aggregate Milk
+        milk_rows = get_milk_intake_summary(user_phone, d, d)
+        milk_ml = sum([row[3] or 0 for row in milk_rows])
+        milk_kcal = sum([row[4] or 0 for row in milk_rows])
+        data.append({
+            "date": d,
+            "mpasi_ml": mpasi_ml,
+            "mpasi_kcal": mpasi_kcal,
+            "milk_ml": milk_ml,
+            "milk_kcal": milk_kcal
+        })
+    return data
+
+@app.get("/mpasi-milk-graph/{user_phone}")
+def mpasi_milk_graph(user_phone: str):
+    data = get_mpasi_milk_data(user_phone)
+    chart_buf = generate_mpasi_milk_chart(data, user_phone)
+    return StreamingResponse(chart_buf, media_type='image/png')
+
+@app.get("/report-mpasi-milk/{user_phone}")
+def report_mpasi_milk(user_phone: str):
+    data = get_mpasi_milk_data(user_phone)
+    chart_buf = generate_mpasi_milk_chart(data, user_phone)
+    pdf_buf = generate_pdf_report(data, chart_buf, user_phone)
+    return StreamingResponse(pdf_buf, media_type='application/pdf')
 
 # Health check endpoint for Railway
 @app.get("/health")
