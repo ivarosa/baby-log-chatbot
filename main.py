@@ -15,6 +15,8 @@ from twilio.rest import Client
 from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 import pytz
+import matplotlib
+import reportlab
 from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
