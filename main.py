@@ -3,7 +3,7 @@ import psycopg
 from psycopg.rows import dict_row
 from urllib.parse import urlparse
 from fastapi import FastAPI, Request, BackgroundTasks
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from twilio.twiml.messaging_response import MessagingResponse
 from datetime import datetime, date, timedelta
 import re
@@ -15,6 +15,9 @@ from twilio.rest import Client
 from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 import pytz
+from mpasi_milk_chart import generate_mpasi_milk_chart
+from generate_report import generate_mpasi_milk_report
+import io
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -1241,6 +1244,50 @@ async def health_check():
             "status": "unhealthy", 
             "timestamp": datetime.now().isoformat(),
             "error": str(e)
+        }
+
+# MPASI & Milk Intake Chart endpoint
+@app.get("/mpasi-milk-graph/{user_phone}")
+async def mpasi_milk_graph(user_phone: str):
+    """Generate and serve PNG chart showing daily MPASI and milk intake"""
+    try:
+        # Generate chart
+        chart_bytes = generate_mpasi_milk_chart(user_phone)
+        
+        # Return as streaming response with PNG content type
+        return StreamingResponse(
+            io.BytesIO(chart_bytes),
+            media_type="image/png",
+            headers={"Content-Disposition": f"inline; filename=mpasi_milk_chart_{user_phone}.png"}
+        )
+    except Exception as e:
+        logging.error(f"Error generating chart for {user_phone}: {e}")
+        return {
+            "error": "Failed to generate chart",
+            "details": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+# MPASI & Milk Intake PDF Report endpoint  
+@app.get("/report-mpasi-milk/{user_phone}")
+async def report_mpasi_milk(user_phone: str):
+    """Generate and serve PDF report with chart and summary table"""
+    try:
+        # Generate PDF report
+        pdf_bytes = generate_mpasi_milk_report(user_phone)
+        
+        # Return as streaming response with PDF content type
+        return StreamingResponse(
+            io.BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=mpasi_milk_report_{user_phone}.pdf"}
+        )
+    except Exception as e:
+        logging.error(f"Error generating PDF report for {user_phone}: {e}")
+        return {
+            "error": "Failed to generate PDF report", 
+            "details": str(e),
+            "timestamp": datetime.now().isoformat()
         }
 
 # FastAPI startup event
