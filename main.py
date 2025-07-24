@@ -1248,6 +1248,8 @@ def get_mpasi_milk_data(user_phone):
 
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
+    if not user_phone.startswith("whatsapp:"):
+        user_phone = "whatsapp:" + user_phone
     print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
     print("Aggregated data:", data)
@@ -1256,6 +1258,8 @@ def mpasi_milk_graph(user_phone: str):
 
 @app.get("/report-mpasi-milk/{user_phone}")
 def report_mpasi_milk(user_phone: str):
+    if not user_phone.startswith("whatsapp:"):
+        user_phone = "whatsapp:" + user_phone
     print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
     print("Aggregated data:", data)
