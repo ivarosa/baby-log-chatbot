@@ -8,3 +8,5 @@ python-dotenv==1.0.0
 psycopg[binary]
 openai
 pytz
+matplotlib
+reportlab

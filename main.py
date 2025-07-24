@@ -15,6 +15,8 @@ from twilio.rest import Client
 from send_twilio_message import send_twilio_message
 from gpt_model_config import estimate_calories_openai  # <-- Import your function here
 import pytz
+from mpasi_milk_chart import generate_mpasi_milk_chart
+from generate_report import generate_mpasi_milk_report
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -60,6 +62,46 @@ def list_users():
         results = [dict(zip(columns, row)) for row in cur.fetchall()]
         conn.close()
         return {"users": results}
+
+@app.get("/mpasi-milk-graph/{user_phone}")
+async def get_mpasi_milk_graph(user_phone: str):
+    """
+    Returns a PNG chart of daily MPASI and milk intake for the last 7 days
+    """
+    try:
+        chart_bytes = generate_mpasi_milk_chart(user_phone, days=7)
+        return Response(
+            content=chart_bytes,
+            media_type="image/png",
+            headers={"Content-Disposition": f"inline; filename=mpasi_milk_chart_{user_phone}.png"}
+        )
+    except Exception as e:
+        logging.error(f"Error generating chart for {user_phone}: {e}")
+        return Response(
+            content=f"Error generating chart: {str(e)}",
+            status_code=500,
+            media_type="text/plain"
+        )
+
+@app.get("/report-mpasi-milk/{user_phone}")
+async def get_mpasi_milk_report(user_phone: str):
+    """
+    Returns a PDF report with chart and summary table for the last 7 days
+    """
+    try:
+        pdf_bytes = generate_mpasi_milk_report(user_phone, days=7)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=mpasi_milk_report_{user_phone}.pdf"}
+        )
+    except Exception as e:
+        logging.error(f"Error generating report for {user_phone}: {e}")
+        return Response(
+            content=f"Error generating report: {str(e)}",
+            status_code=500,
+            media_type="text/plain"
+        )
 
 def execute_query(query, params=None, fetch=False):
     """Universal query executor for both SQLite and PostgreSQL"""

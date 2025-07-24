@@ -1,0 +1,244 @@
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from datetime import datetime, timedelta
+import io
+import tempfile
+import os
+from mpasi_milk_chart import get_mpasi_milk_data, generate_mpasi_milk_chart
+
+def create_summary_table(data):
+    """
+    Create a summary table from the MPASI and milk data
+    Returns a reportlab Table object
+    """
+    # Prepare table data
+    table_data = [
+        ['Date', 'MPASI (ml)', 'MPASI (kcal)', 'Milk (ml)', 'Milk (kcal)', 'Total (ml)', 'Total (kcal)']
+    ]
+    
+    # Sort data by date
+    sorted_dates = sorted(data.keys())
+    
+    total_mpasi_ml = 0
+    total_mpasi_cal = 0
+    total_milk_ml = 0
+    total_milk_cal = 0
+    
+    for date_str in sorted_dates:
+        day_data = data[date_str]
+        mpasi_ml = day_data['mpasi_ml']
+        mpasi_cal = day_data['mpasi_calories']
+        milk_ml = day_data['milk_ml']
+        milk_cal = day_data['milk_calories']
+        
+        total_mpasi_ml += mpasi_ml
+        total_mpasi_cal += mpasi_cal
+        total_milk_ml += milk_ml
+        total_milk_cal += milk_cal
+        
+        # Format date for display
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        formatted_date = date_obj.strftime('%m/%d')
+        
+        # Add row to table
+        table_data.append([
+            formatted_date,
+            f"{mpasi_ml:.0f}" if mpasi_ml > 0 else "-",
+            f"{mpasi_cal:.0f}" if mpasi_cal > 0 else "-",
+            f"{milk_ml:.0f}" if milk_ml > 0 else "-",
+            f"{milk_cal:.0f}" if milk_cal > 0 else "-",
+            f"{mpasi_ml + milk_ml:.0f}",
+            f"{mpasi_cal + milk_cal:.0f}"
+        ])
+    
+    # Add totals row
+    table_data.append([
+        'TOTAL',
+        f"{total_mpasi_ml:.0f}",
+        f"{total_mpasi_cal:.0f}",
+        f"{total_milk_ml:.0f}",
+        f"{total_milk_cal:.0f}",
+        f"{total_mpasi_ml + total_milk_ml:.0f}",
+        f"{total_mpasi_cal + total_milk_cal:.0f}"
+    ])
+    
+    # Create table
+    table = Table(table_data, colWidths=[0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch])
+    
+    # Style the table
+    table.setStyle(TableStyle([
+        # Header style
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        
+        # Data rows style
+        ('FONTNAME', (0, 1), (-1, -2), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -2), 9),
+        ('GRID', (0, 0), (-1, -2), 1, colors.black),
+        
+        # Total row style
+        ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, -1), (-1, -1), 10),
+        ('GRID', (0, -1), (-1, -1), 1, colors.black),
+        
+        # Zebra striping for data rows
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.beige]),
+    ]))
+    
+    return table
+
+def generate_mpasi_milk_report(user_phone, days=7):
+    """
+    Generate a PDF report with chart and summary table
+    Returns bytes of the PDF document
+    """
+    # Create a buffer for the PDF
+    buffer = io.BytesIO()
+    
+    # Create the PDF document
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72,
+                           topMargin=72, bottomMargin=72)
+    
+    # Get styles
+    styles = getSampleStyleSheet()
+    
+    # Create custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        spaceAfter=30,
+        alignment=TA_CENTER,
+        textColor=colors.darkblue
+    )
+    
+    subtitle_style = ParagraphStyle(
+        'CustomSubtitle',
+        parent=styles['Heading2'],
+        fontSize=14,
+        spaceAfter=20,
+        alignment=TA_LEFT,
+        textColor=colors.darkgreen
+    )
+    
+    normal_style = styles['Normal']
+    normal_style.fontSize = 10
+    normal_style.spaceAfter = 12
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Add title
+    title = f"MPASI & Milk Intake Report"
+    elements.append(Paragraph(title, title_style))
+    
+    # Add user info and date range
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=days-1)
+    
+    info_text = f"""
+    <b>User:</b> {user_phone}<br/>
+    <b>Report Period:</b> {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}<br/>
+    <b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}<br/>
+    """
+    elements.append(Paragraph(info_text, normal_style))
+    elements.append(Spacer(1, 20))
+    
+    # Generate and add chart
+    try:
+        chart_bytes = generate_mpasi_milk_chart(user_phone, days)
+        
+        # Create image from bytes using BytesIO
+        chart_img = Image(io.BytesIO(chart_bytes), width=6*inch, height=4*inch)
+        elements.append(chart_img)
+        elements.append(Spacer(1, 20))
+        
+    except Exception as e:
+        # If chart generation fails, add error message
+        error_text = f"Chart generation failed: {str(e)}"
+        elements.append(Paragraph(error_text, normal_style))
+        elements.append(Spacer(1, 20))
+    
+    # Add summary table section
+    elements.append(Paragraph("Daily Summary Table", subtitle_style))
+    
+    # Get data and create table
+    try:
+        data = get_mpasi_milk_data(user_phone, days)
+        summary_table = create_summary_table(data)
+        elements.append(summary_table)
+        elements.append(Spacer(1, 20))
+        
+        # Add key insights
+        sorted_dates = sorted(data.keys())
+        total_days_with_data = sum(1 for date_str in sorted_dates 
+                                  if data[date_str]['mpasi_ml'] > 0 or data[date_str]['milk_ml'] > 0)
+        
+        total_mpasi_ml = sum(data[date_str]['mpasi_ml'] for date_str in sorted_dates)
+        total_milk_ml = sum(data[date_str]['milk_ml'] for date_str in sorted_dates)
+        total_calories = sum(data[date_str]['mpasi_calories'] + data[date_str]['milk_calories'] 
+                            for date_str in sorted_dates)
+        
+        avg_mpasi = total_mpasi_ml / days if days > 0 else 0
+        avg_milk = total_milk_ml / days if days > 0 else 0
+        avg_calories = total_calories / days if days > 0 else 0
+        
+        insights_text = f"""
+        <b>Key Insights:</b><br/>
+        • Days with recorded intake: {total_days_with_data} out of {days}<br/>
+        • Average daily MPASI: {avg_mpasi:.1f} ml<br/>
+        • Average daily milk: {avg_milk:.1f} ml<br/>
+        • Average daily calories: {avg_calories:.1f} kcal<br/>
+        • Total period calories: {total_calories:.1f} kcal<br/>
+        """
+        elements.append(Paragraph(insights_text, normal_style))
+        
+    except Exception as e:
+        error_text = f"Table generation failed: {str(e)}"
+        elements.append(Paragraph(error_text, normal_style))
+    
+    # Add footer
+    elements.append(Spacer(1, 30))
+    footer_text = "Generated by Baby Log Chatbot - Track your baby's nutrition journey!"
+    footer_style = ParagraphStyle(
+        'Footer',
+        parent=styles['Normal'],
+        fontSize=8,
+        alignment=TA_CENTER,
+        textColor=colors.grey
+    )
+    elements.append(Paragraph(footer_text, footer_style))
+    
+    # Build PDF
+    doc.build(elements)
+    
+    # Get the value of the BytesIO buffer and return it
+    pdf_bytes = buffer.getvalue()
+    buffer.close()
+    
+    return pdf_bytes
+
+if __name__ == "__main__":
+    # Test the report generation
+    test_user = "+1234567890"
+    
+    try:
+        pdf_bytes = generate_mpasi_milk_report(test_user)
+        
+        with open("/tmp/test_report.pdf", "wb") as f:
+            f.write(pdf_bytes)
+        
+        print(f"Test report generated: {len(pdf_bytes)} bytes")
+        
+    except Exception as e:
+        print(f"Error generating report: {e}")
+        import traceback
+        traceback.print_exc()
