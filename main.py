@@ -1248,13 +1248,17 @@ def get_mpasi_milk_data(user_phone):
 
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
+    print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
+    print("Aggregated data:", data)
     chart_buf = generate_mpasi_milk_chart(data, user_phone)
     return StreamingResponse(chart_buf, media_type='image/png')
 
 @app.get("/report-mpasi-milk/{user_phone}")
 def report_mpasi_milk(user_phone: str):
+    print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
+    print("Aggregated data:", data)
     chart_buf = generate_mpasi_milk_chart(data, user_phone)
     pdf_buf = generate_pdf_report(data, chart_buf, user_phone)
     return StreamingResponse(pdf_buf, media_type='application/pdf')
