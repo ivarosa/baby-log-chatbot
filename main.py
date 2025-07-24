@@ -1225,6 +1225,13 @@ def send_calorie_summary_and_update(user, data):
 def get_mpasi_milk_data(user_phone):
     from datetime import date, timedelta
 
+    # If you need to fetch user's ASI kcal setting for calorie calculation:
+    try:
+        user_kcal = get_user_calorie_setting(user_phone)
+        asi_kcal = user_kcal.get("asi", 0.67)
+    except Exception:
+        asi_kcal = 0.67
+
     today = date.today()
     days = [(today - timedelta(days=i)).isoformat() for i in reversed(range(7))]
     data = []
@@ -1233,16 +1240,41 @@ def get_mpasi_milk_data(user_phone):
         mpasi_rows = get_mpasi_summary(user_phone, d, d)
         mpasi_ml = sum([row[2] or 0 for row in mpasi_rows])
         mpasi_kcal = sum([row[5] or 0 for row in mpasi_rows])
-        # Aggregate Milk
+
+        # Aggregate Milk - separate ASI and Sufor
         milk_rows = get_milk_intake_summary(user_phone, d, d)
-        milk_ml = sum([row[3] or 0 for row in milk_rows])
-        milk_kcal = sum([row[4] or 0 for row in milk_rows])
+        milk_ml_asi = 0
+        milk_kcal_asi = 0
+        milk_ml_sufor = 0
+        milk_kcal_sufor = 0
+
+        for row in milk_rows:
+            # row: [milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)]
+            milk_type = row[0]
+            volume_ml = row[3] or 0
+            sufor_calorie = row[4] or 0
+            if milk_type == "asi":
+                milk_ml_asi += volume_ml
+                milk_kcal_asi += volume_ml * asi_kcal
+            elif milk_type == "sufor":
+                milk_ml_sufor += volume_ml
+                milk_kcal_sufor += sufor_calorie
+
+        # Total milk
+        milk_ml = milk_ml_asi + milk_ml_sufor
+        milk_kcal = milk_kcal_asi + milk_kcal_sufor
+
+        # If you want to keep ASI and Sufor separate, you can also add those fields
         data.append({
             "date": d,
             "mpasi_ml": mpasi_ml,
             "mpasi_kcal": mpasi_kcal,
             "milk_ml": milk_ml,
-            "milk_kcal": milk_kcal
+            "milk_kcal": milk_kcal,
+            "milk_ml_asi": milk_ml_asi,
+            "milk_kcal_asi": milk_kcal_asi,
+            "milk_ml_sufor": milk_ml_sufor,
+            "milk_kcal_sufor": milk_kcal_sufor,
         })
     return data
 
