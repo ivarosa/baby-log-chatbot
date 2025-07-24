@@ -1278,10 +1278,18 @@ def get_mpasi_milk_data(user_phone):
         })
     return data
 
+def normalize_user_phone(user_phone):
+    # Accept 'whatsapp:' or 'p:' prefix
+    if user_phone.startswith("whatsapp:"):
+        return user_phone
+    elif user_phone.startswith("p:"):
+        return user_phone
+    else:
+        # Default to 'whatsapp:'
+        return "whatsapp:" + user_phone
+
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
-    if not user_phone.startswith("whatsapp:"):
-        user_phone = "whatsapp:" + user_phone
     print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
     print("Aggregated data:", data)
@@ -1290,8 +1298,7 @@ def mpasi_milk_graph(user_phone: str):
 
 @app.get("/report-mpasi-milk/{user_phone}")
 def report_mpasi_milk(user_phone: str):
-    if not user_phone.startswith("whatsapp:"):
-        user_phone = "whatsapp:" + user_phone
+    user_phone = normalize_user_phone(user_phone)
     print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
     print("Aggregated data:", data)
