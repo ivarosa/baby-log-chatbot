@@ -11,7 +11,7 @@ app = Flask(__name__)
 def get_baby_data(phone_number, days=7):
     """Fetch baby feeding data from database for the given phone number"""
     # Replace with your actual database connection and query
-    conn = sqlite3.connect('your_database.db')
+    conn = sqlite3.connect('babylog.db')
     cursor = conn.cursor()
     
     # Get data for last 7 days
