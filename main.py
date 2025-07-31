@@ -1290,6 +1290,7 @@ def normalize_user_phone(user_phone):
 
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
+    user_phone = normalize_user_phone(user_phone)  # Add this line
     print("Requested report for:", user_phone)
     data = get_mpasi_milk_data(user_phone)
     print("Aggregated data:", data)
