@@ -10,3 +10,4 @@ openai
 pytz
 matplotlib
 reportlab
+flask
