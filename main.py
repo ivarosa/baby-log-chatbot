@@ -209,6 +209,17 @@ def init_db():
                 messages_today INTEGER DEFAULT 0,
                 last_reset DATE DEFAULT CURRENT_DATE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''',
+            '''CREATE TABLE IF NOT EXISTS user_subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_phone TEXT UNIQUE,
+                subscription_tier TEXT NOT NULL DEFAULT 'free',
+                subscription_start TIMESTAMP,
+                subscription_end TIMESTAMP,
+                payment_reference TEXT,
+                payment_method TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )'''
         ]
         
@@ -544,7 +555,33 @@ def get_child(user):
 def save_timbang(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+
+    # Check user tier limits
+    limits = get_tier_limits(user)
+    growth_limit = limits.get("growth_entries")
+
+    # Count current entries if there's a limit
+    current_count = None
+    if growth_limit is not None:
+        if database_url:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute(f"SELECT COUNT(*) FROM timbang_log WHERE {user_col}=%s", (user,))
+            current_count = c.fetchone()[0]
+            conn.close()
+        else:
+            import sqlite3
+            conn = sqlite3.connect('babylog.db')
+            c = conn.cursor()
+            c.execute(f"SELECT COUNT(*) FROM timbang_log WHERE {user_col}=?", (user,))
+            current_count = c.fetchone()[0]
+            conn.close()
+
+        if current_count >= growth_limit:
+            # Deny save for free user at limit
+            return {"status": "error", "message": f"Free users can only save up to {growth_limit} growth entries. Upgrade to premium for unlimited saves."}
+
+    # Save entry as before
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -564,33 +601,40 @@ def save_timbang(user, data):
         ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
         conn.commit()
         conn.close()
+    return {"status": "ok", "message": "Growth entry saved."}
 
-def get_timbang_history(user, limit=10):
+def get_timbang_history(user, limit=None):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
+    limits = get_tier_limits(user)
+    
+    # Only set limit if free tier and not provided by caller
+    if limit is None:
+        limit = limits.get("growth_entries")
+
+    query = f'''
+        SELECT date, height_cm, weight_kg, head_circum_cm FROM timbang_log
+        WHERE {user_col}=%s
+        ORDER BY date DESC, created_at DESC
+    '''
+    params = [user]
+    if limit is not None:
+        query += ' LIMIT %s'
+        params.append(limit)
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(f'''
-            SELECT date, height_cm, weight_kg, head_circum_cm FROM timbang_log
-            WHERE {user_col}=%s
-            ORDER BY date DESC, created_at DESC
-            LIMIT %s
-        ''', (user, limit))
+        c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
         return rows
     else:
         import sqlite3
+        query = query.replace('%s', '?')  # For SQLite
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        c.execute(f'''
-            SELECT date, height_cm, weight_kg, head_circum_cm FROM timbang_log
-            WHERE {user_col}=?
-            ORDER BY date DESC, created_at DESC
-            LIMIT ?
-        ''', (user, limit))
+        c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
         return rows
@@ -600,6 +644,29 @@ def save_reminder(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
     
+    # Check active reminders limit
+    limits = get_tier_limits(user)
+    active_limit = limits.get("active_reminders")
+    
+    # Count current active reminders
+    active_count = 0
+    if active_limit is not None:
+        if database_url:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute(f"SELECT COUNT(*) FROM milk_reminders WHERE {user_col}=%s", (user,))
+            active_count = c.fetchone()[0]
+            conn.close()
+        else:
+            import sqlite3
+            conn = sqlite3.connect('babylog.db')
+            c = conn.cursor()
+            c.execute(f"SELECT COUNT(*) FROM milk_reminders WHERE {user_col}=?", (user,))
+            active_count = c.fetchone()[0]
+            conn.close()
+        if active_count >= active_limit:
+            return {"status": "error", "message": f"Free users can only set up to {active_limit} active reminders. Upgrade to premium for unlimited reminders."}
+    
     # Calculate first reminder time
     start_datetime = datetime.now().replace(
         hour=int(data['start_time'].split(':')[0]),
@@ -607,10 +674,10 @@ def save_reminder(user, data):
         second=0,
         microsecond=0
     )
-    
     if start_datetime <= datetime.now():
         start_datetime += timedelta(days=1)
     
+    # Insert new reminder
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -632,20 +699,24 @@ def save_reminder(user, data):
         ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
         conn.commit()
         conn.close()
+    return {"status": "ok", "message": "Reminder saved."}
 
 def get_user_reminders(user, active_only=True):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+    limits = get_tier_limits(user)
+    active_reminder_limit = limits.get("active_reminders")  # None for premium, 3 for free
+
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         query = f'SELECT * FROM milk_reminders WHERE {user_col}=%s'
         params = [user]
-        
         if active_only:
             query += ' AND is_active=TRUE'
-        
+        if active_reminder_limit is not None:
+            query += ' LIMIT %s'
+            params.append(active_reminder_limit)
         c.execute(query, params)
         rows = c.fetchall()
         conn.close()
@@ -656,14 +727,17 @@ def get_user_reminders(user, active_only=True):
         c = conn.cursor()
         query = f'SELECT * FROM milk_reminders WHERE {user_col}=?'
         params = [user]
-        
         if active_only:
             query += ' AND is_active=1'
-        
+        if active_reminder_limit is not None:
+            query += ' LIMIT ?'
+            params.append(active_reminder_limit)
         c.execute(query, params)
         rows = c.fetchall()
         conn.close()
         return rows
+
+#21-08-2025-12-57
 
 def time_in_range(start_str, end_str, check_time):
     """Check if check_time (datetime) is within start and end (HH:MM strings) in local time."""
@@ -903,14 +977,36 @@ def save_poop(user, data):
         conn.commit()
         conn.close()
 
-def get_poop_log(user, limit=10):
+def get_poop_log(user, period_start=None, period_end=None):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+    limits = get_tier_limits(user)
+    poop_log_limit = limits.get("poop_log_limit")
+
+    # If no period is specified and free, restrict to history_days
+    if not period_start and not period_end and limits["history_days"]:
+        period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
+        period_end = datetime.now().strftime('%Y-%m-%d')
+
+    query = f"SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=%s" if database_url else f"SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=?"
+    params = [user]
+
+    # Add date range filter if specified
+    if period_start and period_end:
+        query += " AND date BETWEEN %s AND %s" if database_url else " AND date BETWEEN ? AND ?"
+        params += [period_start, period_end]
+
+    query += " ORDER BY date DESC, time DESC"
+
+    # Only add LIMIT if not premium or if a row limit is set
+    if poop_log_limit:
+        query += " LIMIT %s" if database_url else " LIMIT ?"
+        params.append(poop_log_limit)
+
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(f'SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=%s ORDER BY date DESC, time DESC LIMIT %s', (user, limit))
+        c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
         return rows
@@ -918,7 +1014,7 @@ def get_poop_log(user, limit=10):
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        c.execute(f'SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=? ORDER BY date DESC, time DESC LIMIT ?', (user, limit))
+        c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
         return rows
@@ -952,6 +1048,14 @@ def save_milk_intake(user, data):
 def get_milk_intake_summary(user, period_start=None, period_end=None):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
+
+    # Apply tier-based limits if no specific period requested
+    if not period_start and not period_end:
+        limits = get_tier_limits(user)
+        if limits["history_days"]:
+            # Free tier - limit to X days
+            period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
+            period_end = datetime.now().strftime('%Y-%m-%d')
     
     if database_url:
         conn = get_db_connection()
@@ -1287,6 +1391,131 @@ def normalize_user_phone(user_phone):
     else:
         # Default to 'whatsapp:'
         return "whatsapp:" + user_phone
+
+def check_subscription_status(user):
+    """Check if user has an active premium subscription"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = 'user_phone' if database_url else 'user'
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # First check user_subscriptions table for active subscription
+    c.execute(f'''
+        SELECT subscription_tier, subscription_end 
+        FROM user_subscriptions 
+        WHERE {user_col}=%s
+    ''', (user,))
+    
+    subscription = c.fetchone()
+    
+    if subscription:
+        # If subscription exists, check if it's still valid
+        if isinstance(subscription, dict):  # PostgreSQL
+            tier = subscription['subscription_tier'] 
+            end_date = subscription['subscription_end']
+        else:  # SQLite
+            tier = subscription[0]
+            end_date = subscription[1]
+            
+        if tier == 'premium' and end_date and end_date > datetime.now():
+            # Valid premium subscription
+            c.close()
+            conn.close()
+            return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
+    
+    # If no valid subscription found, fall back to user_tiers table
+    c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=%s', (user,))
+    row = c.fetchone()
+    
+    if not row:
+        # Create new free tier entry if none exists
+        c.execute(f'''
+            INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) 
+            VALUES (%s, %s, %s, %s)
+        ''', (user, 'free', 0, date.today()))
+        conn.commit()
+        result = {'tier': 'free', 'messages_today': 0}
+    else:
+        # Process existing tier info
+        if isinstance(row, dict):  # PostgreSQL
+            if row['last_reset'] != date.today():
+                c.execute(f'''
+                    UPDATE user_tiers 
+                    SET messages_today=0, last_reset=%s 
+                    WHERE {user_col}=%s
+                ''', (date.today(), user))
+                conn.commit()
+                result = {'tier': row['tier'], 'messages_today': 0}
+            else:
+                result = dict(row)
+        else:  # SQLite
+            if row[2] != date.today().isoformat():
+                c.execute(f'UPDATE user_tiers SET messages_today=0, last_reset=? WHERE {user_col}=?', 
+                        (date.today().isoformat(), user))
+                conn.commit()
+                result = {'tier': row[0], 'messages_today': 0}
+            else:
+                result = {'tier': row[0], 'messages_today': row[1]}
+    
+    conn.close()
+    return result
+
+def can_access_feature(user, feature_name):
+    """Check if user can access a specific feature based on their subscription"""
+    user_info = check_subscription_status(user)
+    
+    # Free features - available to everyone
+    free_features = [
+        "basic_tracking",
+        "limited_history",
+        "basic_reminders",
+        "simple_summary"
+    ]
+    
+    # Premium features - require subscription
+    premium_features = [
+        "unlimited_history",
+        "unlimited_reminders",
+        "weekly_trends",
+        "monthly_reports",
+        "growth_percentiles",
+        "data_export",
+        "family_sharing",
+        "multiple_children",
+        "detailed_analytics",
+        "custom_reminders",
+        "priority_support",
+        "pdf_reports"
+    ]
+    
+    if feature_name in free_features:
+        return True
+    
+    if feature_name in premium_features:
+        return user_info['tier'] == 'premium'
+    
+    # If feature not explicitly categorized, default to available
+    return True
+
+def get_tier_limits(user):
+    """Get feature limits based on user's subscription tier"""
+    user_info = check_subscription_status(user)
+    
+    if user_info['tier'] == 'premium':
+        return {
+            "history_days": None,  # Unlimited
+            "growth_entries": None,  # Unlimited
+            "active_reminders": None,  # Unlimited
+            "children_count": 5
+        }
+    else:
+        return {
+            "history_days": 7,
+            "growth_entries": 10,
+            "active_reminders": 3,
+            "children_count": 1
+        }
 
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
