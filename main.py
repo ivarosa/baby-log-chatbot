@@ -520,17 +520,16 @@ def check_subscription_status(user):
     return result
 
 def get_tier_limits(user):
-    """Get feature limits based on user's subscription tier"""
     user_info = check_subscription_status(user)
-    
     if user_info['tier'] == 'premium':
         return {
-            "history_days": None,  # Unlimited
-            "growth_entries": None,  # Unlimited
-            "active_reminders": None,  # Unlimited
+            "history_days": None,
+            "growth_entries": None,
+            "active_reminders": None,
             "children_count": 5,
             "mpasi_entries": None,
-            "pumping_entries": None
+            "pumping_entries": None,
+            "sleep_record": None  # Unlimited for premium
         }
     else:
         return {
@@ -539,7 +538,8 @@ def get_tier_limits(user):
             "active_reminders": 3,
             "children_count": 1,
             "mpasi_entries": 10,
-            "pumping_entries": 10
+            "pumping_entries": 10,
+            "sleep_record": 10  # Limit for free user
         }
 
 def can_access_feature(user, feature_name):
@@ -679,6 +679,54 @@ def get_child(user):
         row = c.fetchone()
         conn.close()
         return row
+
+#sleep record
+def complete_sleep_record(user, sleep_id, end_time):
+    limits = get_tier_limits(user)
+    sleep_limit = limits.get("sleep_record")
+
+    # Check current number of sleep records for enforcement
+    if sleep_limit is not None:
+        current_count = get_sleep_record_count(user)
+        if current_count >= sleep_limit:
+            return f"❌ Free users can only save up to {sleep_limit} sleep records. Upgrade to premium for unlimited records."
+
+    # Get the sleep record
+    sleep_data = get_sleep_by_id(sleep_id)
+    
+    # Calculate duration
+    start_datetime = datetime.strptime(f"{sleep_data['date']} {sleep_data['start_time']}", "%Y-%m-%d %H:%M")
+    end_datetime = datetime.strptime(f"{sleep_data['date']} {end_time}", "%Y-%m-%d %H:%M")
+    
+    # Handle sleep across midnight
+    if end_datetime < start_datetime:
+        end_datetime += timedelta(days=1)
+        
+    duration_minutes = (end_datetime - start_datetime).total_seconds() / 60
+    hours, minutes = divmod(int(duration_minutes), 60)
+    
+    # Update the record
+    update_sleep_record(sleep_id, end_time, duration_minutes)
+    
+    return f"✅ Catatan tidur tersimpan!\n\nDurasi tidur: {hours} jam {minutes} menit\n({sleep_data['start_time']} - {end_time})"
+
+def get_sleep_record_count(user):
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = 'user_phone' if database_url else 'user'
+    if database_url:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(f"SELECT COUNT(*) FROM sleep_log WHERE {user_col}=%s", (user,))
+        count = c.fetchone()[0]
+        conn.close()
+    else:
+        import sqlite3
+        conn = sqlite3.connect('babylog.db')
+        c = conn.cursor()
+        c.execute(f"SELECT COUNT(*) FROM sleep_log WHERE {user_col}=?", (user,))
+        count = c.fetchone()[0]
+        conn.close()
+    return count
 
 # Continue with your existing functions, but adapt database queries...
 def save_timbang(user, data):
@@ -1598,6 +1646,7 @@ WELCOME_MESSAGE = (
     "• `tambah anak` (untuk menambahkan si kecil)\n"
     "• `catat timbang` (untuk log berat badan)\n"
     "• `catat mpasi` (untuk log makanan)\n"
+    "• `catat tidur` (untuk log jam tidur)\n"
     "• `ringkasan hari ini` (untuk melihat rangkuman harian)\n\n"
     "Butuh bantuan lebih lanjut? Ketik `bantuan`.\n"
     "Ingin melihat semua perintah? Ketik `panduan`."
@@ -1614,7 +1663,8 @@ HELP_MESSAGE = (
     "• `catat susu` / `lihat ringkasan susu [hari ini/tanggal]`\n"
     "• `catat pumping` / `lihat ringkasan pumping`\n\n"
     "*Kesehatan & Aktivitas Lain:*\n"
-    "• `catat bab` / `lihat riwayat bab`\n\n"
+    "• `catat bab` / `lihat riwayat bab`\n"
+    "• `catat tidur` / `lihat tidur`\n\n"
     "*Pengaturan Kalori:*\n"
     "• `hitung kalori susu`\n"
     "• `set kalori asi` / `set kalori sufor`\n"
@@ -1625,6 +1675,10 @@ HELP_MESSAGE = (
     "  • `done [volume]ml` (Selesai dan catat volume)\n"
     "  • `snooze [menit]` (Tunda pengingat)\n"
     "  • `skip reminder` (Lewati pengingat)\n\n"
+    "*Pelacakan Tidur:*\n"
+    "• `catat tidur`: Mulai/mencatat tidur bayi\n"
+    "• `selesai tidur`: Selesaikan/mengakhiri sesi tidur\n"
+    "• `lihat tidur`: Lihat riwayat tidur\n\n"
     "*Laporan & Ringkasan:*\n"
     "• `ringkasan hari ini`\n\n"
     "*Perintah Umum:*\n"
@@ -1656,7 +1710,10 @@ PANDUAN_MESSAGE = (
     "• `persentase asupan`: Persentase nutrisi asupan\n\n"
     "*IV. Kesehatan & Aktivitas Lain:*\n"
     "• `catat bab`: Catat riwayat BAB\n"
-    "• `lihat riwayat bab`: Lihat riwayat BAB\n\n"
+    "• `lihat riwayat bab`: Lihat riwayat BAB\n"
+    "• `catat tidur`: Mulai/mencatat tidur bayi\n"
+    "• `selesai tidur`: Selesaikan/mengakhiri sesi tidur\n"
+    "• `lihat tidur`: Lihat riwayat tidur\n\n"
     "*V. Pengingat Susu:*\n"
     "• `atur pengingat susu`: Atur pengingat pemberian susu\n"
     "• `lihat pengingat`: Daftar pengingat susu aktif\n"
@@ -2351,6 +2408,59 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.exception(f"Error in show poop log: {ex}")
                 resp.message("Maaf, terjadi kesalahan saat mengambil data log pup.")
                 return Response(str(resp), media_type="application/xml")
+
+        #Flow: tidur
+        elif msg.lower() == "catat tidur":
+            # Start a new sleep session
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%H:%M")
+            # You may want to check if there's an unfinished sleep session first!
+            sleep_id = start_sleep_record(user, today, time_str)
+            reply = (
+                f"Mulai mencatat tidur pada {time_str}.\n"
+                "Jika bayi sudah bangun, ketik `selesai tidur [HH:MM]` (misal: selesai tidur 07:10)"
+            )
+            user_sessions[user] = session
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+
+        elif msg.lower().startswith("selesai tidur"):
+            # Complete the latest sleep session
+            # Expected: "selesai tidur 06:30"
+            try:
+                end_time = msg.split()[2]
+                # Find the latest sleep_id for this user that is not completed
+                sleep_id = get_latest_open_sleep_id(user)
+                if not sleep_id:
+                    reply = "Tidak ada sesi tidur yang sedang berlangsung."
+                else:
+                    summary = complete_sleep_record(user, sleep_id, end_time)
+                    reply = summary
+            except Exception:
+                reply = "Format salah. Contoh: `selesai tidur 06:30`"
+            user_sessions[user] = session
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+        
+        elif msg.lower() == "lihat tidur":
+            # Show today's sleep log/summary
+            today = datetime.now().strftime("%Y-%m-%d")
+            sleep_rows = get_sleep_summary(user, today)
+            if not sleep_rows:
+                reply = "Belum ada catatan tidur hari ini."
+            else:
+                reply = "*Catatan tidur hari ini:*\n"
+                total_minutes = 0
+                for row in sleep_rows:
+                    # row: (start_time, end_time, duration_minutes)
+                    reply += f"- {row[0]} - {row[1]} ({int(row[2]//60)}j {int(row[2]%60)}m)\n"
+                    total_minutes += row[2] or 0
+                hours, minutes = divmod(int(total_minutes), 60)
+                reply += f"\nTotal tidur hari ini: {hours} jam {minutes} menit"
+            user_sessions[user] = session
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
         
         # ---- Flow 6: Catat Pumping ASI ----
         elif msg.lower() == "catat pumping":
