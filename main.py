@@ -450,6 +450,135 @@ def increment_message_count(user):
     except Exception as e:
         logging.error(f"Error incrementing message count: {e}")
 
+def check_subscription_status(user):
+    """Check if user has an active premium subscription"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = 'user_phone' if database_url else 'user'
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    # First check user_subscriptions table for active subscription
+    c.execute(f'''
+        SELECT subscription_tier, subscription_end 
+        FROM user_subscriptions 
+        WHERE {user_col}=%s
+    ''', (user,))
+    
+    subscription = c.fetchone()
+    
+    if subscription:
+        # If subscription exists, check if it's still valid
+        if isinstance(subscription, dict):  # PostgreSQL
+            tier = subscription['subscription_tier'] 
+            end_date = subscription['subscription_end']
+        else:  # SQLite
+            tier = subscription[0]
+            end_date = subscription[1]
+            
+        if tier == 'premium' and end_date and end_date > datetime.now():
+            # Valid premium subscription
+            c.close()
+            conn.close()
+            return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
+    
+    # If no valid subscription found, fall back to user_tiers table
+    c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=%s', (user,))
+    row = c.fetchone()
+    
+    if not row:
+        # Create new free tier entry if none exists
+        c.execute(f'''
+            INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) 
+            VALUES (%s, %s, %s, %s)
+        ''', (user, 'free', 0, date.today()))
+        conn.commit()
+        result = {'tier': 'free', 'messages_today': 0}
+    else:
+        # Process existing tier info
+        if isinstance(row, dict):  # PostgreSQL
+            if row['last_reset'] != date.today():
+                c.execute(f'''
+                    UPDATE user_tiers 
+                    SET messages_today=0, last_reset=%s 
+                    WHERE {user_col}=%s
+                ''', (date.today(), user))
+                conn.commit()
+                result = {'tier': row['tier'], 'messages_today': 0}
+            else:
+                result = dict(row)
+        else:  # SQLite
+            if row[2] != date.today().isoformat():
+                c.execute(f'UPDATE user_tiers SET messages_today=0, last_reset=? WHERE {user_col}=?', 
+                        (date.today().isoformat(), user))
+                conn.commit()
+                result = {'tier': row[0], 'messages_today': 0}
+            else:
+                result = {'tier': row[0], 'messages_today': row[1]}
+    
+    conn.close()
+    return result
+
+def get_tier_limits(user):
+    """Get feature limits based on user's subscription tier"""
+    user_info = check_subscription_status(user)
+    
+    if user_info['tier'] == 'premium':
+        return {
+            "history_days": None,  # Unlimited
+            "growth_entries": None,  # Unlimited
+            "active_reminders": None,  # Unlimited
+            "children_count": 5,
+            "mpasi_entries": None,
+            "pumping_entries": None
+        }
+    else:
+        return {
+            "history_days": 7,
+            "growth_entries": 10,
+            "active_reminders": 3,
+            "children_count": 1,
+            "mpasi_entries": 10,
+            "pumping_entries": 10
+        }
+
+def can_access_feature(user, feature_name):
+    """Check if user can access a specific feature based on their subscription"""
+    user_info = check_subscription_status(user)
+    
+    # Free features - available to everyone
+    free_features = [
+        "basic_tracking",
+        "limited_history",
+        "basic_reminders",
+        "simple_summary"
+    ]
+    
+    # Premium features - require subscription
+    premium_features = [
+        "unlimited_history",
+        "unlimited_reminders",
+        "weekly_trends",
+        "monthly_reports",
+        "growth_percentiles",
+        "data_export",
+        "family_sharing",
+        "multiple_children",
+        "detailed_analytics",
+        "custom_reminders",
+        "priority_support",
+        "pdf_reports"
+    ]
+    
+    if feature_name in free_features:
+        return True
+    
+    if feature_name in premium_features:
+        return user_info['tier'] == 'premium'
+    
+    # If feature not explicitly categorized, default to available
+    return True
+
 # Your existing database functions (adapted for both SQLite and PostgreSQL)
 def get_user_calorie_setting(user):
     database_url = os.environ.get('DATABASE_URL')
@@ -926,7 +1055,9 @@ def save_mpasi(user, data):
 def get_mpasi_summary(user, period_start=None, period_end=None):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+    limits = get_tier_limits(user)
+    mpasi_limit = limits.get("mpasi_entries")
+
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -935,6 +1066,10 @@ def get_mpasi_summary(user, period_start=None, period_end=None):
         if period_start and period_end:
             query += ' AND date BETWEEN %s AND %s'
             params += [period_start, period_end]
+        query += ' ORDER BY date DESC, time DESC'
+        if mpasi_limit is not None:
+            query += ' LIMIT %s'
+            params.append(mpasi_limit)
         c.execute(query, params)
         rows = c.fetchall()
         conn.close()
@@ -948,6 +1083,10 @@ def get_mpasi_summary(user, period_start=None, period_end=None):
         if period_start and period_end:
             query += ' AND date BETWEEN ? AND ?'
             params += [period_start, period_end]
+        query += ' ORDER BY date DESC, time DESC'
+        if mpasi_limit is not None:
+            query += ' LIMIT ?'
+            params.append(mpasi_limit)
         c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
@@ -1185,7 +1324,9 @@ def save_pumping(user, data):
 def get_pumping_summary(user, period_start=None, period_end=None):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+    limits = get_tier_limits(user)
+    pumping_limit = limits.get("pumping_entries")
+
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -1194,6 +1335,10 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         if period_start and period_end:
             query += ' AND date BETWEEN %s AND %s'
             params += [period_start, period_end]
+        query += ' ORDER BY date DESC, time DESC'
+        if pumping_limit is not None:
+            query += ' LIMIT %s'
+            params.append(pumping_limit)
         c.execute(query, params)
         rows = c.fetchall()
         conn.close()
@@ -1207,70 +1352,68 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         if period_start and period_end:
             query += ' AND date BETWEEN ? AND ?'
             params += [period_start, period_end]
+        query += ' ORDER BY date DESC, time DESC'
+        if pumping_limit is not None:
+            query += ' LIMIT ?'
+            params.append(pumping_limit)
         c.execute(query, tuple(params))
         rows = c.fetchall()
         conn.close()
         return rows
 
 def get_daily_summary(user, summary_date):
+    import os
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-    
+
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
+        # Pumping summary
         c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM pumping_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
-        pump = c.fetchone() or {'sum': 0, 'sum_1': 0, 'count': 0, 'sum_2': 0}
+        pump = c.fetchone() or (0, 0, 0, 0)
+        # MPASI summary
         c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM mpasi_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
-        mpasi = c.fetchone() or {'count': 0, 'sum': 0, 'sum_1': 0}
+        mpasi = c.fetchone() or (0, 0, 0)
+        # Growth summary
         c.execute(f'SELECT weight_kg, height_cm FROM timbang_log WHERE {user_col}=%s AND date=%s ORDER BY created_at DESC LIMIT 1', (user, summary_date))
-        growth = c.fetchone() or {'weight_kg': "-", 'height_cm': "-"}
+        growth = c.fetchone() or (None, None)
+        # Poop summary
         c.execute(f'SELECT COUNT(*) FROM poop_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
-        poop = c.fetchone() or {'count': 0}
+        poop = c.fetchone() or (0,)
         conn.close()
-        
-        return {
-            "pumping_count": pump['count'] or 0,
-            "pumping_total": (pump['sum'] or 0) + (pump['sum_1'] or 0),
-            "pumping_left": pump['sum'] or 0,
-            "pumping_right": pump['sum_1'] or 0,
-            "pumping_bags": pump['sum_2'] or 0,
-            "mpasi_count": mpasi['count'] or 0,
-            "mpasi_total": mpasi['sum'] or 0,
-            "calories": mpasi['sum_1'] or 0,
-            "weight": growth['weight_kg'],
-            "height": growth['height_cm'],
-            "poop_count": poop['count'] or 0,
-            "note": "-"
-        }
     else:
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
+        # Pumping summary
         c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM pumping_log WHERE {user_col}=? AND date=?', (user, summary_date))
         pump = c.fetchone() or (0, 0, 0, 0)
+        # MPASI summary
         c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM mpasi_log WHERE {user_col}=? AND date=?', (user, summary_date))
         mpasi = c.fetchone() or (0, 0, 0)
+        # Growth summary
         c.execute(f'SELECT weight_kg, height_cm FROM timbang_log WHERE {user_col}=? AND date=? ORDER BY created_at DESC LIMIT 1', (user, summary_date))
-        growth = c.fetchone() or ("-", "-")
+        growth = c.fetchone() or (None, None)
+        # Poop summary
         c.execute(f'SELECT COUNT(*) FROM poop_log WHERE {user_col}=? AND date=?', (user, summary_date))
         poop = c.fetchone() or (0,)
         conn.close()
-        
-        return {
-            "pumping_count": pump[2] or 0,
-            "pumping_total": (pump[0] or 0) + (pump[1] or 0),
-            "pumping_left": pump[0] or 0,
-            "pumping_right": pump[1] or 0,
-            "pumping_bags": pump[3] or 0,
-            "mpasi_count": mpasi[0] or 0,
-            "mpasi_total": mpasi[1] or 0,
-            "calories": mpasi[2] or 0,
-            "weight": growth[0],
-            "height": growth[1],
-            "poop_count": poop[0] or 0,
-            "note": "-"
-        }
+
+    return {
+        "pumping_count": pump[2] or 0,
+        "pumping_total": (pump[0] or 0) + (pump[1] or 0),
+        "pumping_left": pump[0] or 0,
+        "pumping_right": pump[1] or 0,
+        "pumping_bags": pump[3] or 0,
+        "mpasi_count": mpasi[0] or 0,
+        "mpasi_total": mpasi[1] or 0,
+        "calories": mpasi[2] or 0,
+        "weight": growth[0] if growth[0] is not None else "-",
+        "height": growth[1] if growth[1] is not None else "-",
+        "poop_count": poop[0] or 0,
+        "note": "-"
+    }
 
 def format_summary_message(data, summary_date):
     lines = [
@@ -1329,7 +1472,7 @@ def send_calorie_summary_and_update(user, data):
 def get_mpasi_milk_data(user_phone):
     from datetime import date, timedelta
 
-    # If you need to fetch user's ASI kcal setting for calorie calculation:
+    # Get ASI kcal value for this user (default 0.67 if not found)
     try:
         user_kcal = get_user_calorie_setting(user_phone)
         asi_kcal = user_kcal.get("asi", 0.67)
@@ -1340,13 +1483,13 @@ def get_mpasi_milk_data(user_phone):
     days = [(today - timedelta(days=i)).isoformat() for i in reversed(range(7))]
     data = []
     for d in days:
-        # Aggregate MPASI
-        mpasi_rows = get_mpasi_summary(user_phone, d, d)
-        mpasi_ml = sum([row[2] or 0 for row in mpasi_rows])
-        mpasi_kcal = sum([row[5] or 0 for row in mpasi_rows])
+        # Aggregate MPASI for this day
+        mpasi_rows = get_mpasi_summary(user_phone, d, d) or []
+        mpasi_ml = sum([(row[2] or 0) for row in mpasi_rows])
+        mpasi_kcal = sum([(row[5] or 0) for row in mpasi_rows])
 
-        # Aggregate Milk - separate ASI and Sufor
-        milk_rows = get_milk_intake_summary(user_phone, d, d)
+        # Aggregate Milk for this day - separate ASI and Sufor
+        milk_rows = get_milk_intake_summary(user_phone, d, d) or []
         milk_ml_asi = 0
         milk_kcal_asi = 0
         milk_ml_sufor = 0
@@ -1364,11 +1507,9 @@ def get_mpasi_milk_data(user_phone):
                 milk_ml_sufor += volume_ml
                 milk_kcal_sufor += sufor_calorie
 
-        # Total milk
         milk_ml = milk_ml_asi + milk_ml_sufor
         milk_kcal = milk_kcal_asi + milk_kcal_sufor
 
-        # If you want to keep ASI and Sufor separate, you can also add those fields
         data.append({
             "date": d,
             "mpasi_ml": mpasi_ml,
@@ -1391,131 +1532,6 @@ def normalize_user_phone(user_phone):
     else:
         # Default to 'whatsapp:'
         return "whatsapp:" + user_phone
-
-def check_subscription_status(user):
-    """Check if user has an active premium subscription"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    
-    # First check user_subscriptions table for active subscription
-    c.execute(f'''
-        SELECT subscription_tier, subscription_end 
-        FROM user_subscriptions 
-        WHERE {user_col}=%s
-    ''', (user,))
-    
-    subscription = c.fetchone()
-    
-    if subscription:
-        # If subscription exists, check if it's still valid
-        if isinstance(subscription, dict):  # PostgreSQL
-            tier = subscription['subscription_tier'] 
-            end_date = subscription['subscription_end']
-        else:  # SQLite
-            tier = subscription[0]
-            end_date = subscription[1]
-            
-        if tier == 'premium' and end_date and end_date > datetime.now():
-            # Valid premium subscription
-            c.close()
-            conn.close()
-            return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
-    
-    # If no valid subscription found, fall back to user_tiers table
-    c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=%s', (user,))
-    row = c.fetchone()
-    
-    if not row:
-        # Create new free tier entry if none exists
-        c.execute(f'''
-            INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) 
-            VALUES (%s, %s, %s, %s)
-        ''', (user, 'free', 0, date.today()))
-        conn.commit()
-        result = {'tier': 'free', 'messages_today': 0}
-    else:
-        # Process existing tier info
-        if isinstance(row, dict):  # PostgreSQL
-            if row['last_reset'] != date.today():
-                c.execute(f'''
-                    UPDATE user_tiers 
-                    SET messages_today=0, last_reset=%s 
-                    WHERE {user_col}=%s
-                ''', (date.today(), user))
-                conn.commit()
-                result = {'tier': row['tier'], 'messages_today': 0}
-            else:
-                result = dict(row)
-        else:  # SQLite
-            if row[2] != date.today().isoformat():
-                c.execute(f'UPDATE user_tiers SET messages_today=0, last_reset=? WHERE {user_col}=?', 
-                        (date.today().isoformat(), user))
-                conn.commit()
-                result = {'tier': row[0], 'messages_today': 0}
-            else:
-                result = {'tier': row[0], 'messages_today': row[1]}
-    
-    conn.close()
-    return result
-
-def can_access_feature(user, feature_name):
-    """Check if user can access a specific feature based on their subscription"""
-    user_info = check_subscription_status(user)
-    
-    # Free features - available to everyone
-    free_features = [
-        "basic_tracking",
-        "limited_history",
-        "basic_reminders",
-        "simple_summary"
-    ]
-    
-    # Premium features - require subscription
-    premium_features = [
-        "unlimited_history",
-        "unlimited_reminders",
-        "weekly_trends",
-        "monthly_reports",
-        "growth_percentiles",
-        "data_export",
-        "family_sharing",
-        "multiple_children",
-        "detailed_analytics",
-        "custom_reminders",
-        "priority_support",
-        "pdf_reports"
-    ]
-    
-    if feature_name in free_features:
-        return True
-    
-    if feature_name in premium_features:
-        return user_info['tier'] == 'premium'
-    
-    # If feature not explicitly categorized, default to available
-    return True
-
-def get_tier_limits(user):
-    """Get feature limits based on user's subscription tier"""
-    user_info = check_subscription_status(user)
-    
-    if user_info['tier'] == 'premium':
-        return {
-            "history_days": None,  # Unlimited
-            "growth_entries": None,  # Unlimited
-            "active_reminders": None,  # Unlimited
-            "children_count": 5
-        }
-    else:
-        return {
-            "history_days": 7,
-            "growth_entries": 10,
-            "active_reminders": 3,
-            "children_count": 1
-        }
 
 @app.get("/mpasi-milk-graph/{user_phone}")
 def mpasi_milk_graph(user_phone: str):
