@@ -998,7 +998,12 @@ def check_and_send_reminders():
                 logging.info(f"Skipping reminder for user={user} at {now_for_check}, outside {start_str}-{end_str}")
                 send_this = False
             else:
-                send_this = True
+                # Check daily reminder send limit for free users
+                if user_info['tier'] == 'free' and user_info['messages_today'] >= 2:
+                    logging.info(f"Free user {user} has reached daily reminder limit.")
+                    send_this = False
+                else:
+                    send_this = True
 
             if send_this and send_twilio_message(user, message):
                 logging.info(f"Sent reminder to {user} at {now_for_check}")
