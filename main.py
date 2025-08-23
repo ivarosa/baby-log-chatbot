@@ -732,33 +732,7 @@ def get_sleep_record_count(user):
 def save_timbang(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
-
-    # Check user tier limits
-    limits = get_tier_limits(user)
-    growth_limit = limits.get("growth_entries")
-
-    # Count current entries if there's a limit
-    current_count = None
-    if growth_limit is not None:
-        if database_url:
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute(f"SELECT COUNT(*) FROM timbang_log WHERE {user_col}=%s", (user,))
-            current_count = c.fetchone()[0]
-            conn.close()
-        else:
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            c.execute(f"SELECT COUNT(*) FROM timbang_log WHERE {user_col}=?", (user,))
-            current_count = c.fetchone()[0]
-            conn.close()
-
-        if current_count >= growth_limit:
-            # Deny save for free user at limit
-            return {"status": "error", "message": f"Free users can only save up to {growth_limit} growth entries. Upgrade to premium for unlimited saves."}
-
-    # Save entry as before
+    
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -778,7 +752,6 @@ def save_timbang(user, data):
         ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
         conn.commit()
         conn.close()
-    return {"status": "ok", "message": "Growth entry saved."}
 
 def get_timbang_history(user, limit=None):
     database_url = os.environ.get('DATABASE_URL')
@@ -821,29 +794,6 @@ def save_reminder(user, data):
     database_url = os.environ.get('DATABASE_URL')
     user_col = 'user_phone' if database_url else 'user'
     
-    # Check active reminders limit
-    limits = get_tier_limits(user)
-    active_limit = limits.get("active_reminders")
-    
-    # Count current active reminders
-    active_count = 0
-    if active_limit is not None:
-        if database_url:
-            conn = get_db_connection()
-            c = conn.cursor()
-            c.execute(f"SELECT COUNT(*) FROM milk_reminders WHERE {user_col}=%s", (user,))
-            active_count = c.fetchone()[0]
-            conn.close()
-        else:
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            c.execute(f"SELECT COUNT(*) FROM milk_reminders WHERE {user_col}=?", (user,))
-            active_count = c.fetchone()[0]
-            conn.close()
-        if active_count >= active_limit:
-            return {"status": "error", "message": f"Free users can only set up to {active_limit} active reminders. Upgrade to premium for unlimited reminders."}
-    
     # Calculate first reminder time
     start_datetime = datetime.now().replace(
         hour=int(data['start_time'].split(':')[0]),
@@ -851,10 +801,10 @@ def save_reminder(user, data):
         second=0,
         microsecond=0
     )
+    
     if start_datetime <= datetime.now():
         start_datetime += timedelta(days=1)
     
-    # Insert new reminder
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
@@ -876,7 +826,6 @@ def save_reminder(user, data):
         ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
         conn.commit()
         conn.close()
-    return {"status": "ok", "message": "Reminder saved."}
 
 def get_user_reminders(user, active_only=True):
     database_url = os.environ.get('DATABASE_URL')
