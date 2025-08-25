@@ -53,35 +53,6 @@ class DatabaseSecurity:
             query_template = query_template.replace('{}', column_name, 1)
         
         return query_template, params
-
-# Usage in your main.py - Replace vulnerable queries:
-def get_child_secure(user):
-    """Secure version of get_child"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
-    
-    # Validate column name
-    user_col = DatabaseSecurity.validate_column_name(
-        user_col, 
-        DatabaseSecurity.ALLOWED_USER_COLUMNS
-    )
-    
-    if database_url:
-        conn = get_db_connection()
-        c = conn.cursor()
-        # Now safe because user_col is validated
-        query = f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=%s ORDER BY created_at DESC LIMIT 1'
-        c.execute(query, (user,))
-        row = c.fetchone()
-        conn.close()
-        return row
-    else:
-        # SQLite version
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        query = f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=? ORDER BY created_at DESC LIMIT 1'
-        c.execute(query, (user,))
         row = c.fetchone()
         conn.close()
         return row
