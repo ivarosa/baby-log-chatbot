@@ -20,6 +20,7 @@ import reportlab
 from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
+import database_security
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -1524,6 +1525,38 @@ def get_mpasi_milk_data(user_phone):
             "milk_kcal_sufor": milk_kcal_sufor,
         })
     return data
+
+# Usage in your main.py - Replace vulnerable queries:
+def get_child_secure(user):
+    """Secure version of get_child"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = 'user_phone' if database_url else 'user'
+    
+    # Validate column name
+    user_col = DatabaseSecurity.validate_column_name(
+        user_col, 
+        DatabaseSecurity.ALLOWED_USER_COLUMNS
+    )
+    
+    if database_url:
+        conn = get_db_connection()
+        c = conn.cursor()
+        # Now safe because user_col is validated
+        query = f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=%s ORDER BY created_at DESC LIMIT 1'
+        c.execute(query, (user,))
+        row = c.fetchone()
+        conn.close()
+        return row
+    else:
+        # SQLite version
+        import sqlite3
+        conn = sqlite3.connect('babylog.db')
+        c = conn.cursor()
+        query = f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=? ORDER BY created_at DESC LIMIT 1'
+        c.execute(query, (user,))
+        row = c.fetchone()
+        conn.close()
+        return row
 
 def normalize_user_phone(user_phone):
     # Accept 'whatsapp:' or 'p:' prefix
