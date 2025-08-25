@@ -94,24 +94,3 @@ class SessionManager:
                     for user_id, session in self.sessions.items()
                 }
             }
-
-# Replace in main.py:
-# OLD: user_sessions = {}
-# NEW:
-from session_manager import SessionManager
-session_manager = SessionManager(timeout_minutes=30)
-
-# Replace all occurrences:
-# OLD: session = user_sessions.get(user, {"state": None, "data": {}})
-# NEW:
-session = session_manager.get_session(user)
-
-# OLD: user_sessions[user] = session
-# NEW:
-session_manager.update_session(user, state=session["state"], data=session["data"])
-
-# Add new endpoint for monitoring:
-@app.get("/admin/sessions")
-async def get_session_stats():
-    """Admin endpoint to monitor sessions"""
-    return session_manager.get_stats()
