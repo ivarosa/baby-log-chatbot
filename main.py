@@ -21,6 +21,7 @@ from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
 import database_security
+import validators
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -2153,15 +2154,16 @@ Apakah sudah benar? (ya/tidak)"""
             if msg.lower().strip() == "today":
                 session["data"]["date"] = datetime.now().strftime("%Y-%m-%d")
                 session["state"] = "MPASI_TIME"
-                reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30 atau 18:45)"
+                reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
             else:
-                try:
-                    datetime.strptime(msg, "%Y-%m-%d")
+                # Validate date input
+                is_valid, error_msg = InputValidator.validate_date(msg)
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
+                else:
                     session["data"]["date"] = msg
                     session["state"] = "MPASI_TIME"
-                    reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30 atau 18:45)"
-                except ValueError:
-                    reply = "Masukkan tanggal dengan format YYYY-MM-DD atau ketik 'today'."
+                    reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
@@ -2185,12 +2187,14 @@ Apakah sudah benar? (ya/tidak)"""
 
         # Volume Makan
         elif session["state"] == "MPASI_VOL":
-            try:
+            # Validate volume input
+            is_valid, error_msg = InputValidator.validate_volume_ml(msg)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
+            else:
                 session["data"]["volume_ml"] = float(msg)
                 session["state"] = "MPASI_DETAIL"
                 reply = "Makanan apa saja? (cth: nasi 50gr, ayam 30gr, wortel 20gr)"
-            except ValueError:
-                reply = "Masukkan angka untuk ml."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
