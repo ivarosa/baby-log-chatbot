@@ -130,35 +130,3 @@ class InputValidator:
             text = text[:max_length]
         
         return text.strip()
-
-# Integration in main.py - Example for MPASI flow:
-elif session["state"] == "MPASI_DATE":
-    if msg.lower().strip() == "today":
-        session["data"]["date"] = datetime.now().strftime("%Y-%m-%d")
-        session["state"] = "MPASI_TIME"
-        reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
-    else:
-        # Validate date input
-        is_valid, error_msg = InputValidator.validate_date(msg)
-        if not is_valid:
-            reply = f"❌ {error_msg}"
-        else:
-            session["data"]["date"] = msg
-            session["state"] = "MPASI_TIME"
-            reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
-    user_sessions[user] = session
-    resp.message(reply)
-    return Response(str(resp), media_type="application/xml")
-
-elif session["state"] == "MPASI_VOL":
-    # Validate volume input
-    is_valid, error_msg = InputValidator.validate_volume_ml(msg)
-    if not is_valid:
-        reply = f"❌ {error_msg}"
-    else:
-        session["data"]["volume_ml"] = float(msg)
-        session["state"] = "MPASI_DETAIL"
-        reply = "Makanan apa saja? (cth: nasi 50gr, ayam 30gr, wortel 20gr)"
-    user_sessions[user] = session
-    resp.message(reply)
-    return Response(str(resp), media_type="application/xml")
