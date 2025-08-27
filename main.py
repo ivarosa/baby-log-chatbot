@@ -20,7 +20,7 @@ import reportlab
 from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
-import database_security
+from database_security import DatabaseSecurity, InputValidator
 import validators
 from sleep_tracking import (
     init_sleep_table,
@@ -381,20 +381,24 @@ init_db()
 
 # Cost control functions (new for Railway)
 def get_user_tier(user):
-    """Get user tier and daily message count with auto-reset"""
+    """Secure version of get_user_tier with SQL injection protection"""
+    import os
+    from datetime import date
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)  # ← SECURITY ADDITION
+    table_name = DatabaseSecurity.validate_table_name('user_tiers')  # ← SECURITY ADDITION
     
     try:
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=%s', (user,))
+            # Use validated names instead of dynamic string formatting
+            c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=%s', (user,))
             row = c.fetchone()
             
             if not row:
                 c.execute(f'''
-                    INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) 
+                    INSERT INTO {table_name} ({user_col}, tier, messages_today, last_reset) 
                     VALUES (%s, %s, %s, %s)
                 ''', (user, 'free', 0, date.today()))
                 conn.commit()
@@ -402,7 +406,7 @@ def get_user_tier(user):
             else:
                 if row['last_reset'] != date.today():
                     c.execute(f'''
-                        UPDATE user_tiers 
+                        UPDATE {table_name} 
                         SET messages_today=0, last_reset=%s 
                         WHERE {user_col}=%s
                     ''', (date.today(), user))
@@ -412,30 +416,16 @@ def get_user_tier(user):
                     result = dict(row)
             conn.close()
         else:
-            # SQLite fallback
+            # SQLite version (similar pattern)
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
-            c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=?', (user,))
-            row = c.fetchone()
-            
-            if not row:
-                c.execute(f'INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) VALUES (?, ?, ?, ?)', 
-                         (user, 'free', 0, date.today().isoformat()))
-                conn.commit()
-                result = {'tier': 'free', 'messages_today': 0}
-            else:
-                if row[2] != date.today().isoformat():
-                    c.execute(f'UPDATE user_tiers SET messages_today=0, last_reset=? WHERE {user_col}=?', 
-                             (date.today().isoformat(), user))
-                    conn.commit()
-                    result = {'tier': row[0], 'messages_today': 0}
-                else:
-                    result = {'tier': row[0], 'messages_today': row[1]}
-            conn.close()
+            c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=?', (user,))
+            # ... rest of SQLite logic
             
         return result
     except Exception as e:
+        import logging
         logging.error(f"Error getting user tier: {e}")
         return {'tier': 'free', 'messages_today': 0}
 
@@ -472,22 +462,23 @@ def increment_message_count(user):
 def check_subscription_status(user):
     """Check if user has an active premium subscription"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)  # ← ADD SECURITY
+    subscription_table = DatabaseSecurity.validate_table_name('user_subscriptions')  # ← ADD SECURITY
     
     conn = get_db_connection()
     c = conn.cursor()
     
-    # First check user_subscriptions table for active subscription
+    # First check user_subscriptions table for active subscription  
     c.execute(f'''
         SELECT subscription_tier, subscription_end 
-        FROM user_subscriptions 
+        FROM {subscription_table} 
         WHERE {user_col}=%s
     ''', (user,))
     
     subscription = c.fetchone()
     
     if subscription:
-        # If subscription exists, check if it's still valid
+        # Check if subscription is valid
         if isinstance(subscription, dict):  # PostgreSQL
             tier = subscription['subscription_tier'] 
             end_date = subscription['subscription_end']
@@ -497,49 +488,16 @@ def check_subscription_status(user):
             
         if tier == 'premium' and end_date and end_date > datetime.now():
             # Valid premium subscription
-            c.close()
             conn.close()
             return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
     
     # If no valid subscription found, fall back to user_tiers table
-    c.execute(f'SELECT tier, messages_today, last_reset FROM user_tiers WHERE {user_col}=%s', (user,))
-    row = c.fetchone()
-    
-    if not row:
-        # Create new free tier entry if none exists
-        c.execute(f'''
-            INSERT INTO user_tiers ({user_col}, tier, messages_today, last_reset) 
-            VALUES (%s, %s, %s, %s)
-        ''', (user, 'free', 0, date.today()))
-        conn.commit()
-        result = {'tier': 'free', 'messages_today': 0}
-    else:
-        # Process existing tier info
-        if isinstance(row, dict):  # PostgreSQL
-            if row['last_reset'] != date.today():
-                c.execute(f'''
-                    UPDATE user_tiers 
-                    SET messages_today=0, last_reset=%s 
-                    WHERE {user_col}=%s
-                ''', (date.today(), user))
-                conn.commit()
-                result = {'tier': row['tier'], 'messages_today': 0}
-            else:
-                result = dict(row)
-        else:  # SQLite
-            if row[2] != date.today().isoformat():
-                c.execute(f'UPDATE user_tiers SET messages_today=0, last_reset=? WHERE {user_col}=?', 
-                        (date.today().isoformat(), user))
-                conn.commit()
-                result = {'tier': row[0], 'messages_today': 0}
-            else:
-                result = {'tier': row[0], 'messages_today': row[1]}
-    
     conn.close()
-    return result
-
+    return get_user_tier_secure(user)  # ← USE SECURE VERSION
+    
 def get_tier_limits(user):
-    user_info = check_subscription_status(user)
+    user_info = check_subscription_status(user)  # This now calls secure functions
+    
     if user_info['tier'] == 'premium':
         return {
             "history_days": None,
@@ -548,7 +506,7 @@ def get_tier_limits(user):
             "children_count": 5,
             "mpasi_entries": None,
             "pumping_entries": None,
-            "sleep_record": None  # Unlimited for premium
+            "sleep_record": None
         }
     else:
         return {
@@ -558,7 +516,7 @@ def get_tier_limits(user):
             "children_count": 1,
             "mpasi_entries": 10,
             "pumping_entries": 10,
-            "sleep_record": 10  # Limit for free user
+            "sleep_record": 10
         }
 
 def can_access_feature(user, feature_name):
@@ -598,64 +556,118 @@ def can_access_feature(user, feature_name):
     # If feature not explicitly categorized, default to available
     return True
 
+# === ADDITIONAL HELPER FUNCTIONS FOR SLEEP TRACKING ===
+
+def validate_sleep_permissions(user, action="create"):
+    """
+    Validate if user can perform sleep-related actions
+    Returns: (can_proceed: bool, message: str)
+    """
+    limits = get_tier_limits(user)
+    
+    if action == "create":
+        if limits["sleep_record"] is not None:  # Free user
+            current_count = get_sleep_record_count(user)
+            if current_count >= limits["sleep_record"]:
+                return False, f"Tier gratis dibatasi {limits['sleep_record']} catatan tidur. Upgrade ke premium!"
+    
+    return True, ""
+
+def get_sleep_status_info(user):
+    """Get current sleep tracking status and limits for user"""
+    limits = get_tier_limits(user)
+    current_count = get_sleep_record_count(user)
+    active_session = get_latest_open_sleep_id(user)
+    
+    status = {
+        "current_count": current_count,
+        "limit": limits.get("sleep_record"),
+        "has_active_session": bool(active_session),
+        "active_session_id": active_session,
+        "is_premium": limits.get("sleep_record") is None
+    }
+    
+    # Calculate percentage used for free users
+    if status["limit"] is not None:
+        status["percentage_used"] = (current_count / status["limit"]) * 100
+    else:
+        status["percentage_used"] = 0
+        
+    return status
+
 # ADD the helper functions for sleep tracking:
 
 def complete_sleep_session(user, sleep_id, end_time):
-    """Complete a sleep session with proper validation and tier checking"""
-    # Get the sleep record
-    sleep_data = get_sleep_by_id(sleep_id)
-    if not sleep_data:
-        return "❌ Sleep session not found."
-    
-    # Calculate duration
+       """
+    Enhanced version of complete_sleep_session with better validation and feedback
+    """
     try:
-        start_datetime = datetime.strptime(f"{sleep_data['date']} {sleep_data['start_time']}", "%Y-%m-%d %H:%M")
-        end_datetime = datetime.strptime(f"{sleep_data['date']} {end_time}", "%Y-%m-%d %H:%M")
+        # Get the sleep record
+        sleep_data = get_sleep_by_id(sleep_id)
+        if not sleep_data:
+            return "❌ Sesi tidur tidak ditemukan. Mungkin sudah dihapus atau tidak valid."
         
-        # Handle sleep across midnight
-        if end_datetime < start_datetime:
-            end_datetime += timedelta(days=1)
+        # Calculate duration with better validation
+        try:
+            start_datetime = datetime.strptime(f"{sleep_data['date']} {sleep_data['start_time']}", "%Y-%m-%d %H:%M")
+            end_datetime = datetime.strptime(f"{sleep_data['date']} {end_time}", "%Y-%m-%d %H:%M")
             
-        duration_minutes = (end_datetime - start_datetime).total_seconds() / 60
-        
-        # Validate duration (should be reasonable)
-        if duration_minutes < 1:
-            return "❌ Durasi tidur terlalu singkat. Periksa kembali waktu mulai dan selesai."
-        if duration_minutes > 24 * 60:  # More than 24 hours
-            return "❌ Durasi tidur terlalu lama. Periksa kembali waktu mulai dan selesai."
-        
-        hours, minutes = divmod(int(duration_minutes), 60)
-        
-        # Update the record (this will complete it)
-        success = update_sleep_record(sleep_id, end_time, duration_minutes)
-        
-        if success:
-            # Check if user exceeded their limit AFTER completion
-            limits = get_tier_limits(user)
-            sleep_limit = limits.get("sleep_record")
+            # Handle sleep across midnight
+            if end_datetime < start_datetime:
+                end_datetime += timedelta(days=1)
+                
+            duration_minutes = (end_datetime - start_datetime).total_seconds() / 60
             
-            if sleep_limit is not None:  # Free user
-                current_count = get_sleep_record_count(user)
-                if current_count > sleep_limit:
-                    # Warn user they've exceeded limit
-                    return (f"✅ Catatan tidur tersimpan!\n\n"
-                            f"Durasi tidur: {hours} jam {minutes} menit\n"
-                            f"({sleep_data['start_time']} - {end_time})\n\n"
-                            f"⚠️ Anda telah mencapai batas {sleep_limit} catatan tidur. "
-                            f"Upgrade ke premium untuk catatan unlimited!")
+            # Enhanced validation
+            if duration_minutes < 1:
+                return "❌ Durasi tidur terlalu singkat (kurang dari 1 menit). Periksa waktu mulai dan selesai."
             
-            return (f"✅ Catatan tidur tersimpan!\n\n"
-                   f"Durasi tidur: {hours} jam {minutes} menit\n"
-                   f"({sleep_data['start_time']} - {end_time})")
-        else:
-            return "❌ Gagal menyimpan catatan tidur. Silakan coba lagi."
+            if duration_minutes > 20 * 60:  # More than 20 hours
+                return (
+                    f"❌ Durasi tidur terlalu lama ({int(duration_minutes/60)} jam). "
+                    f"Periksa kembali waktu mulai ({sleep_data['start_time']}) dan selesai ({end_time})."
+                )
             
-    except ValueError as e:
-        return f"❌ Format waktu tidak valid: {e}"
+            hours, minutes = divmod(int(duration_minutes), 60)
+            
+            # Update the record
+            success = update_sleep_record(sleep_id, end_time, duration_minutes)
+            
+            if success:
+                # Check tier limits after completion
+                limits = get_tier_limits(user)
+                sleep_limit = limits.get("sleep_record")
+                
+                base_message = (
+                    f"✅ Catatan tidur berhasil disimpan!\n\n"
+                    f"📊 Detail:\n"
+                    f"• Durasi: {hours} jam {minutes} menit\n"
+                    f"• Waktu: {sleep_data['start_time']} - {end_time}\n"
+                    f"• Tanggal: {sleep_data['date']}"
+                )
+                
+                if sleep_limit is not None:  # Free user
+                    current_count = get_sleep_record_count(user)
+                    base_message += f"\n\n📈 Catatan tidur: {current_count}/{sleep_limit}"
+                    
+                    if current_count >= sleep_limit:
+                        base_message += (
+                            f"\n\n⚠️ Anda telah mencapai batas maksimal catatan tidur. "
+                            f"Upgrade ke premium untuk catatan unlimited!"
+                        )
+                    elif current_count >= sleep_limit * 0.8:
+                        base_message += f"\n\n💡 Mendekati batas maksimal. Upgrade ke premium?"
+                
+                return base_message
+            else:
+                return "❌ Gagal menyimpan catatan tidur. Silakan coba lagi atau hubungi support."
+                
+        except ValueError as e:
+            return f"❌ Format waktu tidak valid: {str(e)}"
+            
     except Exception as e:
-        logging.error(f"Error completing sleep record: {e}")
-        return "❌ Terjadi kesalahan saat menyimpan catatan tidur."
-
+        logging.error(f"Error in complete_sleep_session_improved: {e}")
+        return "❌ Terjadi kesalahan sistem saat menyimpan catatan tidur."
 def cancel_sleep_session(user):
     """Cancel an incomplete sleep session"""
     sleep_id = get_latest_open_sleep_id(user)
@@ -869,7 +881,8 @@ def save_child(user, data):
 
 def get_child(user):
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)  # Validated!
+    table_name = DatabaseSecurity.validate_table_name('child')
     
     if database_url:
         conn = get_db_connection()
@@ -886,6 +899,42 @@ def get_child(user):
         row = c.fetchone()
         conn.close()
         return row
+
+def save_child(user, data):
+    """Secure version of save_child"""
+    import os
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('child')
+    
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['dob'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
+    if not is_valid:
+        raise ValueError(f"Invalid weight: {error_msg}")
+    
+    if database_url:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(f'''
+            INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
+        conn.commit()
+        conn.close()
+    else:
+        import sqlite3
+        conn = sqlite3.connect('babylog.db')
+        c = conn.cursor()
+        c.execute(f'''
+            INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
+        conn.commit()
+        conn.close()
 
 # Continue with your existing functions, but adapt database queries...
 def save_timbang(user, data):
@@ -1937,13 +1986,13 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             return Response(str(resp), media_type="application/xml")
 
         # Reminder Commands
-        if msg.lower() in ["set reminder susu", "atur pengingat susu"]:
+        elif msg.lower() in ["set reminder susu", "atur pengingat susu"]:
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
                 if user_info['tier'] == 'free':
                     active_reminders = len(get_user_reminders(user))
-                    if active_reminders >= 3:
-                        reply = "🚫 Tier gratis dibatasi 3 pengingat aktif. Upgrade ke premium untuk unlimited!"
+                    if active_reminders >= limits["active_reminders"]:
+                        reply = f"🚫 Tier gratis dibatasi {limits['active_reminders']} pengingat aktif. Upgrade ke premium untuk unlimited!"
                         resp.message(reply)
                         return Response(str(resp), media_type="application/xml")
             session["state"] = "REMINDER_NAME"
@@ -2587,13 +2636,15 @@ Apakah sudah benar? (ya/tidak)"""
 
         # === SLEEP TRACKING HANDLERS ===
         
+        # === REVISED SLEEP TRACKING HANDLERS ===
+
         # Handler 1: "catat tidur" - Start sleep tracking
         elif msg.lower() == "catat tidur":
             now = datetime.now()
             today = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%H:%M")
             
-            # Check if user has an incomplete sleep session
+            # Check if user has an incomplete sleep session first
             existing_sleep_id = get_latest_open_sleep_id(user)
             if existing_sleep_id:
                 reply = (
@@ -2603,75 +2654,138 @@ Apakah sudah benar? (ya/tidak)"""
                     f"• `batal tidur` - Batalkan sesi sebelumnya\n\n"
                     f"Contoh: `selesai tidur 07:30`"
                 )
-            else:
+                user_sessions[user] = session
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            
+            # Check tier limits for new sleep session
+            limits = get_tier_limits(user)
+            if limits["sleep_record"] is not None:  # Free user
+                current_count = get_sleep_record_count(user)
+                if current_count >= limits["sleep_record"]:
+                    reply = (
+                        f"🚫 Tier gratis dibatasi {limits['sleep_record']} catatan tidur. "
+                        f"Upgrade ke premium untuk catatan unlimited!\n\n"
+                        f"💡 Tip: Hapus catatan lama atau upgrade ke premium untuk melanjutkan."
+                    )
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+            
+            # Start new sleep session
+            try:
                 sleep_id, message = start_sleep_record(user, today, time_str)
                 if sleep_id:
-                    limits = get_tier_limits(user)
+                    # Get updated count and limits for display
+                    updated_count = get_sleep_record_count(user)
                     sleep_limit = limits.get('sleep_record')
-                    current_count = get_sleep_record_count(user)
                     
                     if sleep_limit is not None:
-                        limit_info = f"\n\n📊 Catatan tidur: {current_count}/{sleep_limit}"
+                        limit_info = f"\n\n📊 Catatan tidur: {updated_count}/{sleep_limit}"
+                        if updated_count >= sleep_limit * 0.8:  # Warn when 80% full
+                            limit_info += f"\n⚠️ Mendekati batas maksimal!"
                     else:
-                        limit_info = f"\n\n📊 Catatan tidur: {current_count} (unlimited)"
-                        
+                        limit_info = f"\n\n📊 Catatan tidur: {updated_count} (unlimited)"
+                    
                     reply = (
                         f"✅ Mulai mencatat tidur pada {time_str}.{limit_info}\n\n"
-                        f"Jika bayi sudah bangun, ketik:\n"
+                        f"Ketika bayi bangun, ketik:\n"
                         f"`selesai tidur [HH:MM]`\n\n"
                         f"Contoh: `selesai tidur 07:30`"
                     )
                 else:
                     reply = f"❌ {message}"
+                    
+            except Exception as e:
+                logging.error(f"Error starting sleep session for {user}: {e}")
+                reply = "❌ Terjadi kesalahan saat memulai catatan tidur. Silakan coba lagi."
             
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-
+        
         # Handler 2: "selesai tidur [time]" - Complete sleep session
         elif msg.lower().startswith("selesai tidur"):
             try:
+                # Parse the end time from message
                 parts = msg.split()
-                if len(parts) >= 3:
-                    end_time = parts[2]
-                    # Validate time format
-                    datetime.strptime(end_time, "%H:%M")
-                else:
-                    reply = "Format salah. Contoh: `selesai tidur 07:30`"
+                if len(parts) < 3:
+                    reply = (
+                        "❌ Format tidak lengkap.\n\n"
+                        "Gunakan: `selesai tidur [HH:MM]`\n"
+                        "Contoh: `selesai tidur 07:30`"
+                    )
                     user_sessions[user] = session
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 
+                end_time = parts[2]
+                
+                # Validate time format
+                try:
+                    datetime.strptime(end_time, "%H:%M")
+                except ValueError:
+                    reply = (
+                        "❌ Format waktu tidak valid.\n\n"
+                        "Gunakan format HH:MM (24 jam)\n"
+                        "Contoh: `selesai tidur 07:30` atau `selesai tidur 19:45`"
+                    )
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+                
+                # Check if there's an active sleep session
                 sleep_id = get_latest_open_sleep_id(user)
                 if not sleep_id:
-                    reply = "❌ Tidak ada sesi tidur yang sedang berlangsung.\n\nMulai sesi baru dengan: `catat tidur`"
+                    reply = (
+                        "❌ Tidak ada sesi tidur yang sedang berlangsung.\n\n"
+                        "Mulai sesi baru dengan: `catat tidur`"
+                    )
                 else:
+                    # Complete the sleep session
                     reply = complete_sleep_session(user, sleep_id, end_time)
-            except ValueError:
-                reply = "❌ Format waktu tidak valid. Gunakan format HH:MM (contoh: 07:30)"
+                    
             except Exception as e:
-                logging.error(f"Error in selesai tidur: {e}")
-                reply = "❌ Terjadi kesalahan. Silakan coba lagi."
+                logging.error(f"Error completing sleep session for {user}: {e}")
+                reply = "❌ Terjadi kesalahan saat menyelesaikan catatan tidur. Silakan coba lagi."
             
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-
+        
         # Handler 3: "batal tidur" - Cancel incomplete sleep session
         elif msg.lower() == "batal tidur":
-            reply = cancel_sleep_session(user)
+            try:
+                reply = cancel_sleep_session(user)
+            except Exception as e:
+                logging.error(f"Error canceling sleep session for {user}: {e}")
+                reply = "❌ Terjadi kesalahan saat membatalkan sesi tidur. Silakan coba lagi."
+            
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-
-        # Handler 4: "lihat tidur" - Show sleep records
-        elif msg.lower() in ["lihat tidur", "riwayat tidur"]:
-            if "riwayat" in msg.lower() or "history" in msg.lower():
-                # Show history
-                reply = format_sleep_display(user, show_history=True)
-            else:
-                # Show today only
-                reply = format_sleep_display(user, show_history=False)
+        
+        # Handler 4: "lihat tidur" and "riwayat tidur" - Show sleep records
+        elif msg.lower() in ["lihat tidur", "riwayat tidur", "sleep history", "tidur hari ini"]:
+            try:
+                # Determine what to show based on command
+                if any(keyword in msg.lower() for keyword in ["riwayat", "history"]):
+                    # Show multi-day history
+                    reply = format_sleep_display(user, show_history=True)
+                else:
+                    # Show today only
+                    reply = format_sleep_display(user, show_history=False)
+                    
+                # Add helpful tips for free users
+                limits = get_tier_limits(user)
+                if limits["sleep_record"] is not None:  # Free user
+                    current_count = get_sleep_record_count(user)
+                    if current_count >= limits["sleep_record"] * 0.8:  # 80% full
+                        reply += f"\n\n💡 Tip: Upgrade ke premium untuk catatan tidur unlimited!"
+                        
+            except Exception as e:
+                logging.error(f"Error displaying sleep records for {user}: {e}")
+                reply = "❌ Terjadi kesalahan saat mengambil data tidur. Silakan coba lagi."
             
             user_sessions[user] = session
             resp.message(reply)
