@@ -438,22 +438,23 @@ def can_send_reminder(user):
         return user_info['messages_today'] < 2  # Free tier limit
 
 def increment_message_count(user):
-    """Track daily message count"""
+    """Secure version of increment_message_count"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('user_tiers')
     
     try:
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute(f'UPDATE user_tiers SET messages_today = messages_today + 1 WHERE {user_col}=%s', (user,))
+            c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=%s', (user,))
             conn.commit()
             conn.close()
         else:
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
-            c.execute(f'UPDATE user_tiers SET messages_today = messages_today + 1 WHERE {user_col}=?', (user,))
+            c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=?', (user,))
             conn.commit()
             conn.close()
     except Exception as e:
@@ -668,27 +669,28 @@ def complete_sleep_session(user, sleep_id, end_time):
         return "❌ Terjadi kesalahan sistem saat menyimpan catatan tidur."
         
 def cancel_sleep_session(user):
-    """Cancel an incomplete sleep session"""
+    """Secure version of cancel_sleep_session"""
     sleep_id = get_latest_open_sleep_id(user)
     if not sleep_id:
         return "❌ Tidak ada sesi tidur yang sedang berlangsung."
     
     # Delete the incomplete sleep record
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('sleep_log')
     
     try:
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute('DELETE FROM sleep_log WHERE id=%s', (sleep_id,))
+            c.execute(f'DELETE FROM {table_name} WHERE id=%s', (sleep_id,))
             conn.commit()
             conn.close()
         else:
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
-            c.execute('DELETE FROM sleep_log WHERE id=?', (sleep_id,))
+            c.execute(f'DELETE FROM {table_name} WHERE id=?', (sleep_id,))
             conn.commit()
             conn.close()
         return "✅ Sesi tidur yang belum selesai telah dibatalkan."
@@ -1145,18 +1147,20 @@ def time_in_range(start_str, end_str, check_time):
         return check_time >= start_time or check_time <= end_time
 
 def check_and_send_reminders():
-    """Background function to check and send due reminders (PATCHED)"""
+    """Secure version of check_and_send_reminders"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
 
     try:
         now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
         now_local = now_utc.astimezone(DEFAULT_TIMEZONE)
+        
         if database_url:
             conn = get_db_connection()
             c = conn.cursor()
             c.execute(f'''
-                SELECT * FROM milk_reminders 
+                SELECT * FROM {reminder_table} 
                 WHERE is_active=TRUE AND next_due <= %s
             ''', (now_utc,))
             due_reminders = c.fetchall()
@@ -1166,7 +1170,7 @@ def check_and_send_reminders():
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
             c.execute(f'''
-                SELECT * FROM milk_reminders 
+                SELECT * FROM {reminder_table} 
                 WHERE is_active=1 AND next_due <= ?
             ''', (now_local,))
             due_reminders = c.fetchall()
@@ -1176,13 +1180,12 @@ def check_and_send_reminders():
 
         for reminder in due_reminders:
             if database_url:
-                user = reminder['user_phone']
+                user = reminder[user_col]
                 reminder_id = reminder['id']
                 reminder_name = reminder['reminder_name']
                 interval = reminder['interval_hours']
                 start_str = reminder['start_time']
                 end_str = reminder['end_time']
-                # next_due is in UTC
                 next_due = reminder['next_due'].astimezone(DEFAULT_TIMEZONE)
             else:
                 user = reminder[1]
@@ -1191,8 +1194,7 @@ def check_and_send_reminders():
                 interval = reminder[3]
                 start_str = reminder[4]
                 end_str = reminder[5]
-                # next_due is naive local
-                next_due = reminder[8]  # next_due
+                next_due = reminder[8]
 
             user_info = get_user_tier(user)
             remaining = 2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'
@@ -1211,11 +1213,8 @@ def check_and_send_reminders():
             # Only send if inside allowed time window
             now_for_check = now_utc.astimezone(DEFAULT_TIMEZONE) if database_url else now_local
             if not time_in_range(start_str, end_str, now_for_check):
-                # Skip sending, but update next_due below
-                logging.info(f"Skipping reminder for user={user} at {now_for_check}, outside {start_str}-{end_str}")
                 send_this = False
             else:
-                # Check daily reminder send limit for free users
                 if user_info['tier'] == 'free' and user_info['messages_today'] >= 2:
                     logging.info(f"Free user {user} has reached daily reminder limit.")
                     send_this = False
@@ -1228,35 +1227,37 @@ def check_and_send_reminders():
                 logging.info(f"Not sending reminder message to {user} at {now_for_check}")
 
             # Calculate the next due time
-            # Step 1: add interval
             if database_url:
                 new_next_due = now_for_check + timedelta(hours=interval)
             else:
                 new_next_due = now_for_check + timedelta(hours=interval)
 
-            # Step 2: if new_next_due is outside allowed window, set to next day's start_time
             if not time_in_range(start_str, end_str, new_next_due):
-                # Move to next day's start_time
-                next_start = (new_next_due + timedelta(days=1)).replace(hour=int(start_str[:2]), minute=int(start_str[3:5]), second=0, microsecond=0)
+                next_start = (new_next_due + timedelta(days=1)).replace(
+                    hour=int(start_str[:2]), 
+                    minute=int(start_str[3:5]), 
+                    second=0, 
+                    microsecond=0
+                )
                 new_next_due = next_start
 
-            # Step 3: save new_next_due (convert to UTC if database_url)
+            # Save new_next_due
             if database_url:
                 next_due_save = new_next_due.astimezone(pytz.utc)
                 last_sent_save = now_utc
                 conn = get_db_connection()
                 c = conn.cursor()
-                c.execute('UPDATE milk_reminders SET next_due=%s, last_sent=%s WHERE id=%s',
+                c.execute(f'UPDATE {reminder_table} SET next_due=%s, last_sent=%s WHERE id=%s',
                         (next_due_save, last_sent_save, reminder_id))
                 conn.commit()
                 conn.close()
             else:
-                next_due_save = new_next_due  # naive local
+                next_due_save = new_next_due
                 last_sent_save = now_local
                 import sqlite3
                 conn = sqlite3.connect('babylog.db')
                 c = conn.cursor()
-                c.execute('UPDATE milk_reminders SET next_due=?, last_sent=? WHERE id=?',
+                c.execute(f'UPDATE {reminder_table} SET next_due=?, last_sent=? WHERE id=?',
                         (next_due_save, last_sent_save, reminder_id))
                 conn.commit()
                 conn.close()
@@ -1706,30 +1707,38 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         return rows
 
 def get_daily_summary(user, summary_date):
-    import os
+     """Secure version of get_daily_summary"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    
+    # Validate table names
+    pumping_table = DatabaseSecurity.validate_table_name('pumping_log')
+    mpasi_table = DatabaseSecurity.validate_table_name('mpasi_log')
+    timbang_table = DatabaseSecurity.validate_table_name('timbang_log')
+    poop_table = DatabaseSecurity.validate_table_name('poop_log')
+    sleep_table = DatabaseSecurity.validate_table_name('sleep_log')
 
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         # Pumping summary
-        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM pumping_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
         pump = c.fetchone() or (0, 0, 0, 0)
         # MPASI summary
-        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM mpasi_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
         mpasi = c.fetchone() or (0, 0, 0)
         # Growth summary
-        c.execute(f'SELECT weight_kg, height_cm FROM timbang_log WHERE {user_col}=%s AND date=%s ORDER BY created_at DESC LIMIT 1', (user, summary_date))
+        c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=%s AND date=%s ORDER BY created_at DESC LIMIT 1', (user, summary_date))
         growth = c.fetchone() or (None, None)
         # Poop summary
-        c.execute(f'SELECT COUNT(*) FROM poop_log WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
         poop = c.fetchone() or (0,)
+        # Sleep summary
         c.execute(f'''
-                SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
-                FROM sleep_log 
-                WHERE {user_col}=%s AND date=%s AND is_complete=TRUE
-            ''', (user, summary_date))
+            SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
+            FROM {sleep_table} 
+            WHERE {user_col}=%s AND date=%s AND is_complete=TRUE
+        ''', (user, summary_date))
         sleep_data = c.fetchone() or {'sessions': 0, 'total_minutes': 0}
         conn.close()
     else:
@@ -1737,41 +1746,52 @@ def get_daily_summary(user, summary_date):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         # Pumping summary
-        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM pumping_log WHERE {user_col}=? AND date=?', (user, summary_date))
+        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         pump = c.fetchone() or (0, 0, 0, 0)
         # MPASI summary
-        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM mpasi_log WHERE {user_col}=? AND date=?', (user, summary_date))
+        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         mpasi = c.fetchone() or (0, 0, 0)
         # Growth summary
-        c.execute(f'SELECT weight_kg, height_cm FROM timbang_log WHERE {user_col}=? AND date=? ORDER BY created_at DESC LIMIT 1', (user, summary_date))
+        c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=? AND date=? ORDER BY created_at DESC LIMIT 1', (user, summary_date))
         growth = c.fetchone() or (None, None)
         # Poop summary
-        c.execute(f'SELECT COUNT(*) FROM poop_log WHERE {user_col}=? AND date=?', (user, summary_date))
+        c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         poop = c.fetchone() or (0,)
+        # Sleep summary
         c.execute(f'''
-                SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
-                FROM sleep_log 
-                WHERE {user_col}=? AND date=? AND is_complete=1
-            ''', (user, summary_date))
+            SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
+            FROM {sleep_table} 
+            WHERE {user_col}=? AND date=? AND is_complete=1
+        ''', (user, summary_date))
         sleep_row = c.fetchone()
         sleep_data = {
-                'sessions': sleep_row[0] if sleep_row else 0,
-                'total_minutes': sleep_row[1] if sleep_row and sleep_row[1] else 0
-            }
+            'sessions': sleep_row[0] if sleep_row else 0,
+            'total_minutes': sleep_row[1] if sleep_row and sleep_row[1] else 0
+        }
         conn.close()
 
+    # Process sleep data for consistent format
+    if isinstance(sleep_data, dict):
+        sleep_sessions = sleep_data.get('sessions', 0)
+        sleep_minutes = sleep_data.get('total_minutes', 0) or 0
+    else:
+        sleep_sessions = sleep_data[0] if sleep_data else 0
+        sleep_minutes = sleep_data[1] if sleep_data and len(sleep_data) > 1 else 0
+    
+    sleep_hours, sleep_mins = divmod(int(sleep_minutes), 60)
+
     return {
-        "pumping_count": pump[2] or 0,
+        "pumping_count": pump[2] if len(pump) > 2 else 0,
         "pumping_total": (pump[0] or 0) + (pump[1] or 0),
         "pumping_left": pump[0] or 0,
         "pumping_right": pump[1] or 0,
-        "pumping_bags": pump[3] or 0,
-        "mpasi_count": mpasi[0] or 0,
-        "mpasi_total": mpasi[1] or 0,
-        "calories": mpasi[2] or 0,
-        "weight": growth[0] if growth[0] is not None else "-",
-        "height": growth[1] if growth[1] is not None else "-",
-        "poop_count": poop[0] or 0,
+        "pumping_bags": pump[3] if len(pump) > 3 else 0,
+        "mpasi_count": mpasi[0] if len(mpasi) > 0 else 0,
+        "mpasi_total": mpasi[1] if len(mpasi) > 1 else 0,
+        "calories": mpasi[2] if len(mpasi) > 2 else 0,
+        "weight": growth[0] if growth and growth[0] is not None else "-",
+        "height": growth[1] if growth and len(growth) > 1 and growth[1] is not None else "-",
+        "poop_count": poop[0] if poop else 0,
         "sleep_sessions": sleep_sessions,
         "sleep_duration": f"{sleep_hours}j {sleep_mins}m" if sleep_sessions > 0 else "-",
         "note": "-"
@@ -1802,19 +1822,22 @@ def extract_total_calories(gpt_summary):
     return int(match.group(1)) if match else None
 
 def update_mpasi_with_calories(user, data, gpt_summary, est_calories):
+    """Secure version of update_mpasi_with_calories"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
+    
     conn = get_db_connection()
     c = conn.cursor()
     if database_url:
         c.execute(
-            f"""UPDATE mpasi_log SET gpt_calorie_summary=%s, est_calories=%s
+            f"""UPDATE {table_name} SET gpt_calorie_summary=%s, est_calories=%s
                 WHERE {user_col}=%s AND date=%s AND time=%s""",
             (gpt_summary, est_calories, user, data['date'], data['time'])
         )
     else:
         c.execute(
-            f"""UPDATE mpasi_log SET gpt_calorie_summary=?, est_calories=?
+            f"""UPDATE {table_name} SET gpt_calorie_summary=?, est_calories=?
                 WHERE {user_col}=? AND date=? AND time=?""",
             (gpt_summary, est_calories, user, data['date'], data['time'])
         )
