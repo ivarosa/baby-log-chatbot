@@ -598,9 +598,7 @@ def get_sleep_status_info(user):
 # ADD the helper functions for sleep tracking:
 
 def complete_sleep_session(user, sleep_id, end_time):
-       """
-    Enhanced version of complete_sleep_session with better validation and feedback
-    """
+    """Enhanced version of complete_sleep_session with better validation and feedback"""
     try:
         # Get the sleep record
         sleep_data = get_sleep_by_id(sleep_id)
@@ -668,6 +666,7 @@ def complete_sleep_session(user, sleep_id, end_time):
     except Exception as e:
         logging.error(f"Error in complete_sleep_session_improved: {e}")
         return "❌ Terjadi kesalahan sistem saat menyimpan catatan tidur."
+        
 def cancel_sleep_session(user):
     """Cancel an incomplete sleep session"""
     sleep_id = get_latest_open_sleep_id(user)
