@@ -85,7 +85,7 @@ class InputValidator:
         return True, None
     
     @staticmethod
-    def validate_weight(value: str) -> Tuple[bool, Optional[str]]:
+    def validate_weight_kg(value: str) -> Tuple[bool, Optional[str]]:
         """Validate weight in kg (0.5 - 50 kg for babies)"""
         is_valid, error = InputValidator.validate_number(
             value, min_val=0.5, max_val=50
@@ -93,9 +93,10 @@ class InputValidator:
         if not is_valid:
             return False, "Berat badan bayi harus antara 0.5 - 50 kg"
         return True, None
+
     
     @staticmethod
-    def validate_height(value: str) -> Tuple[bool, Optional[str]]:
+    def validate_height_cm(value: str) -> Tuple[bool, Optional[str]]:
         """Validate height in cm (30 - 150 cm for babies/toddlers)"""
         is_valid, error = InputValidator.validate_number(
             value, min_val=30, max_val=150
