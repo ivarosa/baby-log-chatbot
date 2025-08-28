@@ -799,19 +799,21 @@ def format_sleep_display(user, show_history=False):
 
 # Your existing database functions (adapted for both SQLite and PostgreSQL)
 def get_user_calorie_setting(user):
+    """Secure version of get_user_calorie_setting"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('calorie_setting')
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(f'SELECT asi_kcal, sufor_kcal FROM calorie_setting WHERE {user_col}=%s', (user,))
+        c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=%s', (user,))
         row = c.fetchone()
         if row:
             conn.close()
             return {"asi": row['asi_kcal'], "sufor": row['sufor_kcal']}
         else:
-            c.execute(f'INSERT INTO calorie_setting ({user_col}) VALUES (%s)', (user,))
+            c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (%s)', (user,))
             conn.commit()
             conn.close()
             return {"asi": 0.67, "sufor": 0.7}
@@ -819,28 +821,42 @@ def get_user_calorie_setting(user):
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        c.execute(f'SELECT asi_kcal, sufor_kcal FROM calorie_setting WHERE {user_col}=?', (user,))
+        c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=?', (user,))
         row = c.fetchone()
         if row:
             conn.close()
             return {"asi": row[0], "sufor": row[1]}
         else:
-            c.execute(f'INSERT INTO calorie_setting ({user_col}) VALUES (?)', (user,))
+            c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (?)', (user,))
             conn.commit()
             conn.close()
             return {"asi": 0.67, "sufor": 0.7}
-
+            
 def set_user_calorie_setting(user, milk_type, value):
+    """Secure version of set_user_calorie_setting"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('calorie_setting')
+    
+    # Validate milk_type
+    if milk_type not in ["asi", "sufor"]:
+        raise ValueError(f"Invalid milk_type: {milk_type}")
+    
+    # Validate value
+    try:
+        value = float(value)
+        if value < 0 or value > 5:  # Reasonable range for calories per ml
+            raise ValueError(f"Invalid calorie value: {value}")
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid calorie value: {value}")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         if milk_type == "asi":
-            c.execute(f'UPDATE calorie_setting SET asi_kcal=%s WHERE {user_col}=%s', (value, user))
+            c.execute(f'UPDATE {table_name} SET asi_kcal=%s WHERE {user_col}=%s', (value, user))
         elif milk_type == "sufor":
-            c.execute(f'UPDATE calorie_setting SET sufor_kcal=%s WHERE {user_col}=%s', (value, user))
+            c.execute(f'UPDATE {table_name} SET sufor_kcal=%s WHERE {user_col}=%s', (value, user))
         conn.commit()
         conn.close()
     else:
@@ -848,9 +864,9 @@ def set_user_calorie_setting(user, milk_type, value):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         if milk_type == "asi":
-            c.execute(f'UPDATE calorie_setting SET asi_kcal=? WHERE {user_col}=?', (value, user))
+            c.execute(f'UPDATE {table_name} SET asi_kcal=? WHERE {user_col}=?', (value, user))
         elif milk_type == "sufor":
-            c.execute(f'UPDATE calorie_setting SET sufor_kcal=? WHERE {user_col}=?', (value, user))
+            c.execute(f'UPDATE {table_name} SET sufor_kcal=? WHERE {user_col}=?', (value, user))
         conn.commit()
         conn.close()
 
@@ -937,14 +953,41 @@ def save_child(user, data):
 
 # Continue with your existing functions, but adapt database queries...
 def save_timbang(user, data):
+    """Secure version of save_timbang"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('timbang_log')
+    
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
+    if not is_valid:
+        raise ValueError(f"Invalid weight: {error_msg}")
+    
+    # Validate height
+    try:
+        height = float(data['height_cm'])
+        if height < 10 or height > 200:  # Reasonable range
+            raise ValueError("Height must be between 10-200 cm")
+    except (ValueError, TypeError):
+        raise ValueError("Invalid height value")
+    
+    # Validate head circumference
+    try:
+        head_circum = float(data['head_circum_cm'])
+        if head_circum < 10 or head_circum > 100:  # Reasonable range
+            raise ValueError("Head circumference must be between 10-100 cm")
+    except (ValueError, TypeError):
+        raise ValueError("Invalid head circumference value")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO timbang_log ({user_col}, date, height_cm, weight_kg, head_circum_cm)
+            INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
             VALUES (%s, %s, %s, %s, %s)
         ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
         conn.commit()
@@ -954,15 +997,17 @@ def save_timbang(user, data):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO timbang_log ({user_col}, date, height_cm, weight_kg, head_circum_cm)
+            INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
             VALUES (?, ?, ?, ?, ?)
         ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
         conn.commit()
         conn.close()
 
 def get_timbang_history(user, limit=None):
+    """Secure version of get_timbang_history"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('timbang_log')
     limits = get_tier_limits(user)
     
     # Only set limit if free tier and not provided by caller
@@ -970,7 +1015,7 @@ def get_timbang_history(user, limit=None):
         limit = limits.get("growth_entries")
 
     query = f'''
-        SELECT date, height_cm, weight_kg, head_circum_cm FROM timbang_log
+        SELECT date, height_cm, weight_kg, head_circum_cm FROM {table_name}
         WHERE {user_col}=%s
         ORDER BY date DESC, created_at DESC
     '''
@@ -995,11 +1040,27 @@ def get_timbang_history(user, limit=None):
         rows = c.fetchall()
         conn.close()
         return rows
-
+        
 # Reminder functions (adapted from your original script)
 def save_reminder(user, data):
+    """Secure version of save_reminder"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    # Validate input data
+    try:
+        # Validate interval
+        interval = int(data['interval_hours'])
+        if interval < 1 or interval > 24:
+            raise ValueError("Interval must be between 1-24 hours")
+        
+        # Validate times
+        datetime.strptime(data['start_time'], "%H:%M")
+        datetime.strptime(data['end_time'], "%H:%M")
+        
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"Invalid reminder data: {e}")
     
     # Calculate first reminder time
     start_datetime = datetime.now().replace(
@@ -1016,7 +1077,7 @@ def save_reminder(user, data):
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO milk_reminders 
+            INSERT INTO {table_name} 
             ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
             VALUES (%s, %s, %s, %s, %s, %s)
         ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
@@ -1027,7 +1088,7 @@ def save_reminder(user, data):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO milk_reminders 
+            INSERT INTO {table_name} 
             ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
@@ -1035,15 +1096,17 @@ def save_reminder(user, data):
         conn.close()
 
 def get_user_reminders(user, active_only=True):
+    """Secure version of get_user_reminders"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
     limits = get_tier_limits(user)
     active_reminder_limit = limits.get("active_reminders")  # None for premium, 3 for free
 
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        query = f'SELECT * FROM milk_reminders WHERE {user_col}=%s'
+        query = f'SELECT * FROM {table_name} WHERE {user_col}=%s'
         params = [user]
         if active_only:
             query += ' AND is_active=TRUE'
@@ -1058,7 +1121,7 @@ def get_user_reminders(user, active_only=True):
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        query = f'SELECT * FROM milk_reminders WHERE {user_col}=?'
+        query = f'SELECT * FROM {table_name} WHERE {user_col}=?'
         params = [user]
         if active_only:
             query += ' AND is_active=1'
@@ -1069,8 +1132,6 @@ def get_user_reminders(user, active_only=True):
         rows = c.fetchall()
         conn.close()
         return rows
-
-#21-08-2025-12-57
 
 def time_in_range(start_str, end_str, check_time):
     """Check if check_time (datetime) is within start and end (HH:MM strings) in local time."""
@@ -1220,57 +1281,55 @@ def start_reminder_scheduler():
 
 # Continue with all your existing functions...
 def save_mpasi(user, data):
-    print(f"[DB] Saving MPASI for {user}: {data}")  # For debugging/logging
+    """Secure version of get_timbang_history"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('timbang_log')
+    limits = get_tier_limits(user)
+    
+    # Only set limit if free tier and not provided by caller
+    if limit is None:
+        limit = limits.get("growth_entries")
+
+    query = f'''
+        SELECT date, height_cm, weight_kg, head_circum_cm FROM {table_name}
+        WHERE {user_col}=%s
+        ORDER BY date DESC, created_at DESC
+    '''
+    params = [user]
+    if limit is not None:
+        query += ' LIMIT %s'
+        params.append(limit)
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO mpasi_log ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ''', (
-            user,
-            data['date'],
-            data['time'],
-            data['volume_ml'],
-            data['food_detail'],
-            data['food_grams'],
-            data.get('est_calories')
-        ))
-        conn.commit()
+        c.execute(query, tuple(params))
+        rows = c.fetchall()
         conn.close()
+        return rows
     else:
         import sqlite3
+        query = query.replace('%s', '?')  # For SQLite
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO mpasi_log ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user,
-            data['date'],
-            data['time'],
-            data['volume_ml'],
-            data['food_detail'],
-            data['food_grams'],
-            data.get('est_calories')
-        ))
-        conn.commit()
+        c.execute(query, tuple(params))
+        rows = c.fetchall()
         conn.close()
-        conn.close()
-
+        return rows
+        
 def get_mpasi_summary(user, period_start=None, period_end=None):
+    """Secure version of get_mpasi_summary"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
     limits = get_tier_limits(user)
     mpasi_limit = limits.get("mpasi_entries")
 
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM mpasi_log WHERE {user_col}=%s'
+        query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM {table_name} WHERE {user_col}=%s'
         params = [user]
         if period_start and period_end:
             query += ' AND date BETWEEN %s AND %s'
@@ -1287,7 +1346,7 @@ def get_mpasi_summary(user, period_start=None, period_end=None):
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM mpasi_log WHERE {user_col}=?'
+        query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM {table_name} WHERE {user_col}=?'
         params = [user]
         if period_start and period_end:
             query += ' AND date BETWEEN ? AND ?'
@@ -1302,14 +1361,33 @@ def get_mpasi_summary(user, period_start=None, period_end=None):
         return rows
 
 def save_poop(user, data):
+    """Secure version of save_poop"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('poop_log')
+    
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_time(data['time'])
+    if not is_valid:
+        raise ValueError(f"Invalid time: {error_msg}")
+    
+    # Validate Bristol scale
+    try:
+        bristol = int(data['bristol_scale'])
+        if bristol < 1 or bristol > 7:
+            raise ValueError("Bristol scale must be between 1-7")
+    except (ValueError, TypeError):
+        raise ValueError("Invalid Bristol scale value")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO poop_log ({user_col}, date, time, bristol_scale)
+            INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
             VALUES (%s, %s, %s, %s)
         ''', (user, data['date'], data['time'], data['bristol_scale']))
         conn.commit()
@@ -1319,15 +1397,17 @@ def save_poop(user, data):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO poop_log ({user_col}, date, time, bristol_scale)
+            INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
             VALUES (?, ?, ?, ?)
         ''', (user, data['date'], data['time'], data['bristol_scale']))
         conn.commit()
         conn.close()
 
 def get_poop_log(user, period_start=None, period_end=None):
+    """Secure version of get_poop_log"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('poop_log')
     limits = get_tier_limits(user)
     poop_log_limit = limits.get("poop_log_limit")
 
@@ -1336,7 +1416,7 @@ def get_poop_log(user, period_start=None, period_end=None):
         period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
         period_end = datetime.now().strftime('%Y-%m-%d')
 
-    query = f"SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=%s" if database_url else f"SELECT date, time, bristol_scale FROM poop_log WHERE {user_col}=?"
+    query = f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=%s" if database_url else f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=?"
     params = [user]
 
     # Add date range filter if specified
@@ -1368,14 +1448,33 @@ def get_poop_log(user, period_start=None, period_end=None):
         return rows
 
 def save_milk_intake(user, data):
+    """Secure version of save_milk_intake"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_intake_log')
+    
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_time(data['time'])
+    if not is_valid:
+        raise ValueError(f"Invalid time: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_volume_ml(str(data['volume_ml']))
+    if not is_valid:
+        raise ValueError(f"Invalid volume: {error_msg}")
+    
+    # Validate milk_type
+    if data['milk_type'] not in ['asi', 'sufor', 'mixed']:
+        raise ValueError(f"Invalid milk_type: {data['milk_type']}")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO milk_intake_log ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
+            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
               data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
@@ -1386,16 +1485,18 @@ def save_milk_intake(user, data):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO milk_intake_log ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
+            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
               data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
         conn.commit()
         conn.close()
-
+        
 def get_milk_intake_summary(user, period_start=None, period_end=None):
+    """Secure version of get_milk_intake_summary"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_intake_log')
 
     # Apply tier-based limits if no specific period requested
     if not period_start and not period_end:
@@ -1410,7 +1511,7 @@ def get_milk_intake_summary(user, period_start=None, period_end=None):
         c = conn.cursor()
         query = f'''
             SELECT milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)
-            FROM milk_intake_log
+            FROM {table_name}
             WHERE {user_col}=%s
         '''
         params = [user]
@@ -1428,7 +1529,7 @@ def get_milk_intake_summary(user, period_start=None, period_end=None):
         c = conn.cursor()
         query = f'''
             SELECT milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)
-            FROM milk_intake_log
+            FROM {table_name}
             WHERE {user_col}=?
         '''
         params = [user]
@@ -1507,14 +1608,46 @@ def format_milk_summary(rows, summary_date):
     return "\n".join(lines)
     
 def save_pumping(user, data):
+    """Secure version of save_pumping"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('pumping_log')
+    
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_time(data['time'])
+    if not is_valid:
+        raise ValueError(f"Invalid time: {error_msg}")
+    
+    # Validate milk volumes
+    try:
+        left_ml = float(data['left_ml'])
+        right_ml = float(data['right_ml'])
+        if left_ml < 0 or right_ml < 0:
+            raise ValueError("Milk volumes cannot be negative")
+        if left_ml > 1000 or right_ml > 1000:  # Reasonable upper limit
+            raise ValueError("Milk volumes seem too high (max 1000ml per side)")
+    except (ValueError, TypeError):
+        raise ValueError("Invalid milk volume values")
+    
+    # Validate milk bags
+    try:
+        milk_bags = int(data['milk_bags'])
+        if milk_bags < 0:
+            raise ValueError("Number of milk bags cannot be negative")
+        if milk_bags > 50:  # Reasonable upper limit
+            raise ValueError("Number of milk bags seems too high (max 50)")
+    except (ValueError, TypeError):
+        raise ValueError("Invalid milk bags value")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO pumping_log ({user_col}, date, time, left_ml, right_ml, milk_bags)
+            INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
             VALUES (%s, %s, %s, %s, %s, %s)
         ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
         conn.commit()
@@ -1524,22 +1657,24 @@ def save_pumping(user, data):
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
         c.execute(f'''
-            INSERT INTO pumping_log ({user_col}, date, time, left_ml, right_ml, milk_bags)
+            INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
         conn.commit()
         conn.close()
 
 def get_pumping_summary(user, period_start=None, period_end=None):
+    """Secure version of get_pumping_summary"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('pumping_log')
     limits = get_tier_limits(user)
     pumping_limit = limits.get("pumping_entries")
 
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM pumping_log WHERE {user_col}=%s'
+        query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM {table_name} WHERE {user_col}=%s'
         params = [user]
         if period_start and period_end:
             query += ' AND date BETWEEN %s AND %s'
@@ -1556,7 +1691,7 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         import sqlite3
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM pumping_log WHERE {user_col}=?'
+        query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM {table_name} WHERE {user_col}=?'
         params = [user]
         if period_start and period_end:
             query += ' AND date BETWEEN ? AND ?'
