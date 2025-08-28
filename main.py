@@ -20,8 +20,8 @@ import reportlab
 from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
-from database_security import DatabaseSecurity, InputValidator
-import validators
+from database_security import DatabaseSecurity
+from validators import InputValidator
 from sleep_tracking import (
     init_sleep_table,
     start_sleep_record,
