@@ -494,11 +494,10 @@ def check_subscription_status(user):
     
     # If no valid subscription found, fall back to user_tiers table
     conn.close()
-    return get_user_tier_secure(user)  # ← USE SECURE VERSION
+    return get_user_tier(user)  # ← USE SECURE VERSION
     
 def get_tier_limits(user):
     user_info = check_subscription_status(user)  # This now calls secure functions
-    
     if user_info['tier'] == 'premium':
         return {
             "history_days": None,
@@ -1282,42 +1281,44 @@ def start_reminder_scheduler():
 
 # Continue with all your existing functions...
 def save_mpasi(user, data):
-    """Secure version of get_timbang_history"""
+    """Secure version of save_mpasi"""
+    print(f"[DB] Saving MPASI for {user}: {data}")
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('timbang_log')
-    limits = get_tier_limits(user)
+    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
     
-    # Only set limit if free tier and not provided by caller
-    if limit is None:
-        limit = limits.get("growth_entries")
-
-    query = f'''
-        SELECT date, height_cm, weight_kg, head_circum_cm FROM {table_name}
-        WHERE {user_col}=%s
-        ORDER BY date DESC, created_at DESC
-    '''
-    params = [user]
-    if limit is not None:
-        query += ' LIMIT %s'
-        params.append(limit)
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_time(data['time'])
+    if not is_valid:
+        raise ValueError(f"Invalid time: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_volume_ml(str(data['volume_ml']))
+    if not is_valid:
+        raise ValueError(f"Invalid volume: {error_msg}")
     
     if database_url:
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
+        c.execute(f'''
+            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+        conn.commit()
         conn.close()
-        return rows
     else:
         import sqlite3
-        query = query.replace('%s', '?')  # For SQLite
         conn = sqlite3.connect('babylog.db')
         c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
+        c.execute(f'''
+            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+        conn.commit()
         conn.close()
-        return rows
         
 def get_mpasi_summary(user, period_start=None, period_end=None):
     """Secure version of get_mpasi_summary"""
@@ -1707,7 +1708,7 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         return rows
 
 def get_daily_summary(user, summary_date):
-     """Secure version of get_daily_summary"""
+    """Secure version of get_daily_summary"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     
@@ -2144,20 +2145,16 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
 
         # Reminder Commands
         elif msg.lower() in ["set reminder susu", "atur pengingat susu"]:
+            limits = get_tier_limits(user)  # Get limits first
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
                 if user_info['tier'] == 'free':
                     active_reminders = len(get_user_reminders(user))
-                    if active_reminders >= limits["active_reminders"]:
+                    if active_reminders >= limits["active_reminders"]:  # Use limits, not undefined variable
                         reply = f"🚫 Tier gratis dibatasi {limits['active_reminders']} pengingat aktif. Upgrade ke premium untuk unlimited!"
                         resp.message(reply)
                         return Response(str(resp), media_type="application/xml")
-            session["state"] = "REMINDER_NAME"
-            session["data"] = {}
-            reply = "Nama pengingat? (contoh: ASI pagi, Sufor malam, ASI reguler)"
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+
 
         elif session["state"] == "REMINDER_NAME":
             session["data"]["reminder_name"] = msg
@@ -2222,18 +2219,19 @@ Apakah sudah benar? (ya/tidak)"""
 
         elif session["state"] == "REMINDER_CONFIRM":
             if msg.lower() == "ya":
-                save_reminder(user, session["data"])
-                reply = f"✅ Pengingat '{session['data']['reminder_name']}' tersimpan! Pengingat pertama akan dikirim pukul {session['data']['start_time']}."
-                session["state"] = None
-                session["data"] = {}
-            elif msg.lower() == "tidak":
-                session["state"] = "REMINDER_NAME"
-                reply = "Mari ulangi. Nama pengingat?"
-            else:
-                reply = "Ketik 'ya' untuk konfirmasi atau 'tidak' untuk mengulang."
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+                try:
+                    save_reminder(user, session["data"])  # This can throw ValueError
+                    reply = f"✅ Pengingat '{session['data']['reminder_name']}' tersimpan! Pengingat pertama akan dikirim pukul {session['data']['start_time']}."
+                    session["state"] = None
+                    session["data"] = {}
+                except ValueError as e:
+                    reply = f"❌ {str(e)}"
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+                except Exception as e:
+                    logging.error(f"Error saving reminder: {e}")
+                    reply = "❌ Terjadi kesalahan saat menyimpan pengingat."
 
         # Show reminders
         elif msg.lower() in ["show reminders", "lihat pengingat"]:
@@ -2446,10 +2444,20 @@ Apakah sudah benar? (ya/tidak)"""
 
         elif session["state"] == "ADDCHILD_CONFIRM":
             if msg.lower() == "ya":
-                save_child(user, session["data"])
-                session["state"] = None
-                session["data"] = {}
-                reply = "Data anak tersimpan! Untuk melihat data anak, ketik: tampilkan anak"
+                try:
+                    save_child(user, session["data"])  # This can throw ValueError
+                    reply = "Data anak tersimpan! Untuk melihat data anak, ketik: tampilkan anak"
+                    session["state"] = None
+                    session["data"] = {}
+                except ValueError as e:
+                    reply = f"❌ {str(e)}"
+                    # Don't reset session, let user fix the error
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+                except Exception as e:
+                    logging.error(f"Error saving child: {e}")
+                    reply = "❌ Terjadi kesalahan saat menyimpan data anak."
             elif msg.lower() == "ulang":
                 session["state"] = "ADDCHILD_NAME"
                 reply = "Siapa nama anak Anda? (Ulangi input)"
@@ -2508,16 +2516,23 @@ Apakah sudah benar? (ya/tidak)"""
         elif session["state"] == "TIMBANG_HEAD":
             try:
                 session["data"]["head_circum_cm"] = float(msg)
-                save_timbang(user, session["data"])
+                save_timbang(user, session["data"])  # This can throw ValueError
+                reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
                 session["state"] = None
                 session["data"] = {}
-                reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
-            except ValueError:
-                reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
+            except ValueError as e:
+                if "Invalid" in str(e):  # From InputValidator
+                    reply = f"❌ {str(e)}"
+                else:
+                    reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
+            except Exception as e:
+                logging.error(f"Error saving timbang: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
+            
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-
+            
         elif msg.lower().startswith("lihat tumbuh kembang"):
             records = get_timbang_history(user)
             if records:
@@ -2610,8 +2625,19 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"]["food_grams"] = ""
                 session["data"]["gpt_calorie_summary"] = ""
                 session["data"]["est_calories"] = None
-            save_mpasi(user, session["data"])
-            reply = "Catat MPASI tersimpan! Silahkan cek di lihat ringkasan mpasi."
+            
+            try:
+                save_mpasi(user, session["data"])  # This can throw ValueError
+                reply = "Catat MPASI tersimpan! Silahkan cek di lihat ringkasan mpasi."
+            except ValueError as e:
+                reply = f"❌ {str(e)}"
+                user_sessions[user] = session
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            except Exception as e:
+                logging.error(f"Error saving MPASI: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data MPASI."
+            
             session["state"] = None
             session["data"] = {}
             user_sessions[user] = session
@@ -2753,14 +2779,20 @@ Apakah sudah benar? (ya/tidak)"""
                 bristol = int(msg)
                 if 1 <= bristol <= 7:
                     session["data"]["bristol_scale"] = bristol
-                    save_poop(user, session["data"])
+                    save_poop(user, session["data"])  # This can throw ValueError
+                    reply = "Log pup tersimpan! Untuk melihat log, ketik: lihat riwayat bab"
                     session["state"] = None
                     session["data"] = {}
-                    reply = "Log pup tersimpan! Untuk melihat log, ketik: lihat riwayat bab"
                 else:
                     reply = "Masukkan angka 1-7 untuk skala Bristol."
-            except ValueError:
-                reply = "Masukkan angka 1-7 untuk skala Bristol."
+            except ValueError as e:
+                if "Invalid" in str(e):  # From InputValidator  
+                    reply = f"❌ {str(e)}"
+                else:
+                    reply = "Masukkan angka 1-7 untuk skala Bristol."
+            except Exception as e:
+                logging.error(f"Error saving poop: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data BAB."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
@@ -3016,28 +3048,23 @@ Apakah sudah benar? (ya/tidak)"""
         elif session["state"] == "PUMP_BAGS":
             try:
                 session["data"]["milk_bags"] = int(msg)
-                save_pumping(user, session["data"])
+                save_pumping(user, session["data"])  # This can throw ValueError
+                reply = "catat pumping tersimpan! Untuk ringkasan, ketik: lihat ringkasan pumping"
                 session["state"] = None
                 session["data"] = {}
-                reply = "catat pumping tersimpan! Untuk ringkasan, ketik: lihat ringkasan pumping"
-            except ValueError:
-                reply = "Masukkan angka bulat untuk jumlah kantong ASI."
+            except ValueError as e:
+                if "Invalid" in str(e):  # From InputValidator
+                    reply = f"❌ {str(e)}"
+                else:
+                    reply = "Masukkan angka bulat untuk jumlah kantong ASI."
+            except Exception as e:
+                logging.error(f"Error saving pumping: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data pumping."
+            
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-        
-        elif msg.lower().startswith("lihat ringkasan pumping"):
-            logs = get_pumping_summary(user)
-            if logs:
-                total_left = sum([l[2] for l in logs])
-                total_right = sum([l[3] for l in logs])
-                total_bags = sum([l[4] for l in logs])
-                reply = f"Total kiri: {total_left}ml\nTotal kanan: {total_right}ml\nKantong: {total_bags}\nSesi: {len(logs)}"
-            else:
-                reply = "Belum ada catat pumping. Ketik 'catat pumping' untuk menambah data."
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+
         
     # --- Flow: Calculate Formula Milk Calories with User Setting ---
         elif msg.lower() == "hitung kalori susu":
@@ -3200,24 +3227,34 @@ Apakah sudah benar? (ya/tidak)"""
                 if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
                     user_kcal = get_user_calorie_setting(user)
                     session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
-                save_milk_intake(user, session["data"])
-                if session["data"]["milk_type"] == "sufor":
-                    extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
-                elif session["data"]["milk_type"] == "asi":
-                    extra = f" ({session['data'].get('asi_method','')})"
-                else:
-                    extra = ""
-                reply = (
-                    f"Catatan minum susu jam {session['data']['time']}, {session['data']['volume_ml']} ml, "
-                    f"{session['data']['milk_type'].upper()}{extra} tersimpan!"
-                )
-                session["state"] = None
-                session["data"] = {}
+                
+                try:
+                    save_milk_intake(user, session["data"])  # This can throw ValueError
+                    if session["data"]["milk_type"] == "sufor":
+                        extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
+                    elif session["data"]["milk_type"] == "asi":
+                        extra = f" ({session['data'].get('asi_method','')})"
+                    else:
+                        extra = ""
+                    reply = (
+                        f"Catatan minum susu jam {session['data']['time']}, {session['data']['volume_ml']} ml, "
+                        f"{session['data']['milk_type'].upper()}{extra} tersimpan!"
+                    )
+                    session["state"] = None
+                    session["data"] = {}
+                except ValueError as e:
+                    reply = f"❌ {str(e)}"
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+                except Exception as e:
+                    logging.error(f"Error saving milk intake: {e}")
+                    reply = "❌ Terjadi kesalahan saat menyimpan data minum susu."
+                
                 user_sessions[user] = session
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
 
-        # --- Milk Intake Summary ---
         # --- Milk Intake Summary ---
         if msg.lower().startswith("lihat ringkasan susu") or msg.lower().startswith("ringkasan susu"):
             mdate = re.search(r"\d{4}-\d{2}-\d{2}", msg)
