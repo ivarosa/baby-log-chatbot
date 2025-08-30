@@ -1,3 +1,5 @@
+from database_security import DatabaseSecurity
+from validators import InputValidator
 import os
 import psycopg
 from psycopg.rows import dict_row
@@ -20,8 +22,6 @@ import reportlab
 from mpasi_milk_chart import generate_mpasi_milk_chart
 from generate_report import generate_pdf_report
 from fastapi.responses import StreamingResponse
-from database_security import DatabaseSecurity
-from validators import InputValidator
 from sleep_tracking import (
     init_sleep_table,
     start_sleep_record,
@@ -872,29 +872,29 @@ def set_user_calorie_setting(user, milk_type, value):
         conn.close()
 
 def save_child(user, data):
+    """Secure version of save_child"""
+    import os
     database_url = os.environ.get('DATABASE_URL')
-    user_col = 'user_phone' if database_url else 'user'
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('child')
     
-    if database_url:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO child ({user_col}, name, gender, dob, height_cm, weight_kg)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO child ({user_col}, name, gender, dob, height_cm, weight_kg)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
-        conn.commit()
-        conn.close()
-
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['dob'])
+    if not is_valid:
+        raise ValueError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
+    if not is_valid:
+        raise ValueError(f"Invalid weight: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_height_cm(str(data['height_cm']))
+    if not is_valid:
+        raise ValueError(f"Invalid height: {error_msg}")
+    
+    # Sanitize text inputs
+    data['name'] = InputValidator.sanitize_text_input(data['name'], 100)
+    
+    # ... rest of the function
 def get_child(user):
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)  # Validated!
@@ -2180,26 +2180,24 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             return Response(str(resp), media_type="application/xml")
 
         elif session["state"] == "REMINDER_START":
-            if re.match(r"^\d{2}:\d{2}$", msg):
-                try:
-                    datetime.strptime(msg, "%H:%M")
-                    session["data"]["start_time"] = msg
-                    session["state"] = "REMINDER_END"
-                    reply = "Jam berapa berhenti pengingat? (format HH:MM, contoh: 22:00)"
-                except ValueError:
-                    reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 06:00"
+            is_valid, error_msg = InputValidator.validate_time(msg)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
             else:
-                reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 06:00"
+                session["data"]["start_time"] = msg
+                session["state"] = "REMINDER_END"
+                reply = "Jam berapa berhenti pengingat? (format HH:MM, contoh: 22:00)"
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
         elif session["state"] == "REMINDER_END":
-            if re.match(r"^\d{2}:\d{2}$", msg):
-                try:
-                    datetime.strptime(msg, "%H:%M")
-                    session["data"]["end_time"] = msg
-                    session["state"] = "REMINDER_CONFIRM"
+            is_valid, error_msg = InputValidator.validate_time(msg)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
+            else:
+                session["data"]["end_time"] = msg
+                session["state"] = "REMINDER_CONFIRM"
                     
                     summary = f"""Konfirmasi Pengingat:
 - Nama: {session['data']['reminder_name']}
@@ -2410,20 +2408,29 @@ Apakah sudah benar? (ya/tidak)"""
             return Response(str(resp), media_type="application/xml")
 
         elif session["state"] == "ADDCHILD_HEIGHT":
-            try:
+            is_valid, error_msg = InputValidator.validate_height_cm(msg)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
+            else:
                 session["data"]["height_cm"] = float(msg)
                 session["state"] = "ADDCHILD_WEIGHT"
                 reply = "Berat badan? (kg, contoh: 8.4 atau 8500 untuk gram)"
-            except ValueError:
-                reply = "Masukkan angka untuk tinggi badan (cm), contoh: 75.5"
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
         elif session["state"] == "ADDCHILD_WEIGHT":
+            # Convert grams to kg if needed
+            weight_input = msg
             try:
-                weight = float(msg)
-                session["data"]["weight_kg"] = weight / 1000 if weight > 100 else weight
+                weight = float(weight_input)
+                weight_kg = weight / 1000 if weight > 100 else weight
+                
+                is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
+                else:
+                    session["data"]["weight_kg"] = weight_kg
                 # Show summary before save
                 summary = (
                     f"Data anak:\n"
@@ -2437,7 +2444,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["state"] = "ADDCHILD_CONFIRM"
                 reply = summary
             except ValueError:
-                reply = "Masukkan angka untuk berat badan, contoh: 8.4 atau 8500."
+                reply = "❌ Masukkan angka untuk berat badan, contoh: 8.4 atau 8500."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
@@ -2491,47 +2498,52 @@ Apakah sudah benar? (ya/tidak)"""
             return Response(str(resp), media_type="application/xml")
         
         elif session["state"] == "TIMBANG_HEIGHT":
-            try:
+            is_valid, error_msg = InputValidator.validate_height_cm(msg)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
+            else:
                 session["data"]["height_cm"] = float(msg)
                 session["state"] = "TIMBANG_WEIGHT"
                 reply = "Berat badan? (kg)"
-            except ValueError:
-                reply = "Masukkan angka yang valid untuk tinggi badan (cm)."
             user_sessions[user] = session
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
         elif session["state"] == "TIMBANG_WEIGHT":
+            weight_input = msg
             try:
-                weight = float(msg)
-                session["data"]["weight_kg"] = weight / 1000 if weight > 100 else weight
-                session["state"] = "TIMBANG_HEAD"
-                reply = "Lingkar kepala (cm)?"
-            except ValueError:
-                reply = "Masukkan angka yang valid untuk berat badan (kg)."
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
-        
-        elif session["state"] == "TIMBANG_HEAD":
-            try:
-                session["data"]["head_circum_cm"] = float(msg)
-                save_timbang(user, session["data"])  # This can throw ValueError
-                reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
-                session["state"] = None
-                session["data"] = {}
-            except ValueError as e:
-                if "Invalid" in str(e):  # From InputValidator
-                    reply = f"❌ {str(e)}"
+                weight = float(weight_input)
+                weight_kg = weight / 1000 if weight > 100 else weight
+                
+                is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
                 else:
-                    reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
-            except Exception as e:
-                logging.error(f"Error saving timbang: {e}")
-                reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
-            
-            user_sessions[user] = session
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+                    session["data"]["weight_kg"] = weight_kg
+                    session["state"] = "TIMBANG_HEAD"
+                    reply = "Lingkar kepala (cm)?"
+            except ValueError:
+                reply = "❌ Masukkan angka yang valid untuk berat badan"
+                
+                elif session["state"] == "TIMBANG_HEAD":
+                    try:
+                        session["data"]["head_circum_cm"] = float(msg)
+                        save_timbang(user, session["data"])  # This can throw ValueError
+                        reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
+                        session["state"] = None
+                        session["data"] = {}
+                    except ValueError as e:
+                        if "Invalid" in str(e):  # From InputValidator
+                            reply = f"❌ {str(e)}"
+                        else:
+                            reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
+                    except Exception as e:
+                        logging.error(f"Error saving timbang: {e}")
+                        reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
+                    
+                    user_sessions[user] = session
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
             
         elif msg.lower().startswith("lihat tumbuh kembang"):
             records = get_timbang_history(user)
@@ -2607,7 +2619,7 @@ Apakah sudah benar? (ya/tidak)"""
 
         # Detail Makanan
         elif session["state"] == "MPASI_DETAIL":
-            session["data"]["food_detail"] = msg
+            session["data"]["food_detail"] = InputValidator.sanitize_text_input(msg, 200)
             session["state"] = "MPASI_GRAMS"
             reply = "Masukkan menu dan porsi MPASI (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
             user_sessions[user] = session
@@ -3154,12 +3166,13 @@ Apakah sudah benar? (ya/tidak)"""
                 return Response(str(resp), media_type="application/xml")
             
             elif session["state"] == "MILK_VOL":
-                try:
+                is_valid, error_msg = InputValidator.validate_volume_ml(msg)
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
+                else:
                     session["data"]["volume_ml"] = float(msg)
                     session["state"] = "MILK_TYPE"
                     reply = "Susu apa yang diminum? (asi/sufor)"
-                except ValueError:
-                    reply = "Masukkan angka untuk ml, contoh: 90"
                 user_sessions[user] = session
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
@@ -3222,8 +3235,8 @@ Apakah sudah benar? (ya/tidak)"""
                 return Response(str(resp), media_type="application/xml")
             
             elif session["state"] == "MILK_NOTE":
-                session["data"]["note"] = "" if msg.lower() == "skip" else msg
-                # PATCH: Always ensure sufor_calorie is set for sufor entries
+                note_text = "" if msg.lower() == "skip" else InputValidator.sanitize_text_input(msg, 200)
+                session["data"]["note"] = note_text                # PATCH: Always ensure sufor_calorie is set for sufor entries
                 if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
                     user_kcal = get_user_calorie_setting(user)
                     session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
