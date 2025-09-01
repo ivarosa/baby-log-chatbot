@@ -2207,19 +2207,14 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             else:
                 session["data"]["end_time"] = msg
                 session["state"] = "REMINDER_CONFIRM"
-                    
-                    summary = f"""Konfirmasi Pengingat:
+                summary = f"""Konfirmasi Pengingat:
 - Nama: {session['data']['reminder_name']}
 - Setiap: {session['data']['interval_hours']} jam
 - Dari: {session['data']['start_time']} 
 - Sampai: {session['data']['end_time']}
 
 Apakah sudah benar? (ya/tidak)"""
-                    reply = summary
-                except ValueError:
-                    reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 22:00"
-            else:
-                reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 22:00"
+                reply = summary
             session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
