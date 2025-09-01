@@ -2154,15 +2154,22 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
 
         # Reminder Commands
         elif msg.lower() in ["set reminder susu", "atur pengingat susu"]:
-            limits = get_tier_limits(user)  # Get limits first
+            limits = get_tier_limits(user)  
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
                 if user_info['tier'] == 'free':
                     active_reminders = len(get_user_reminders(user))
-                    if active_reminders >= limits["active_reminders"]:  # Use limits, not undefined variable
+                    if active_reminders >= limits["active_reminders"]:  
                         reply = f"🚫 Tier gratis dibatasi {limits['active_reminders']} pengingat aktif. Upgrade ke premium untuk unlimited!"
                         resp.message(reply)
                         return Response(str(resp), media_type="application/xml")
+            
+            session["state"] = "REMINDER_NAME"
+            session["data"] = {}
+            reply = "Siapa nama pengingat susu? (contoh: Susu Pagi, Minum ASI)"
+            session_manager.update_session(user, state=session["state"], data=session["data"])
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
 
 
         elif session["state"] == "REMINDER_NAME":
@@ -2200,6 +2207,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
+        # Fix 1: REMINDER_END section (around line 2211)
         elif session["state"] == "REMINDER_END":
             is_valid, error_msg = InputValidator.validate_time(msg)
             if not is_valid:
@@ -2219,6 +2227,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
+# Fix 2: REMINDER_CONFIRM section 
         elif session["state"] == "REMINDER_CONFIRM":
             if msg.lower() == "ya":
                 try:
@@ -2234,6 +2243,14 @@ Apakah sudah benar? (ya/tidak)"""
                 except Exception as e:
                     logging.error(f"Error saving reminder: {e}")
                     reply = "❌ Terjadi kesalahan saat menyimpan pengingat."
+            elif msg.lower() == "tidak":
+                session["state"] = "REMINDER_NAME"
+                reply = "Baik, mari ulang dari awal. Siapa nama pengingat?"
+            else:
+                reply = "Ketik 'ya' jika benar atau 'tidak' untuk mengulang."
+            session_manager.update_session(user, state=session["state"], data=session["data"])
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
 
         # Show reminders
         elif msg.lower() in ["show reminders", "lihat pengingat"]:
@@ -2528,26 +2545,30 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Lingkar kepala (cm)?"
             except ValueError:
                 reply = "❌ Masukkan angka yang valid untuk berat badan"
-                
-                elif session["state"] == "TIMBANG_HEAD":
-                    try:
-                        session["data"]["head_circum_cm"] = float(msg)
-                        save_timbang(user, session["data"])  # This can throw ValueError
-                        reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
-                        session["state"] = None
-                        session["data"] = {}
-                    except ValueError as e:
-                        if "Invalid" in str(e):  # From InputValidator
-                            reply = f"❌ {str(e)}"
-                        else:
-                            reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
-                    except Exception as e:
-                        logging.error(f"Error saving timbang: {e}")
-                        reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
-                    
-                    session_manager.update_session(user, state=session["state"], data=session["data"])
-                    resp.message(reply)
-                    return Response(str(resp), media_type="application/xml")
+            session_manager.update_session(user, state=session["state"], data=session["data"])
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+
+# Fix 5: TIMBANG_HEAD section (the one causing the syntax error at line 2532)
+        elif session["state"] == "TIMBANG_HEAD":
+            try:
+                session["data"]["head_circum_cm"] = float(msg)
+                save_timbang(user, session["data"])  # This can throw ValueError
+                reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
+                session["state"] = None
+                session["data"] = {}
+            except ValueError as e:
+                if "Invalid" in str(e):  # From InputValidator
+                    reply = f"❌ {str(e)}"
+                else:
+                    reply = "Masukkan angka yang valid untuk lingkar kepala (cm)."
+            except Exception as e:
+                logging.error(f"Error saving timbang: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
+            
+            session_manager.update_session(user, state=session["state"], data=session["data"])
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
             
         elif msg.lower().startswith("lihat tumbuh kembang"):
             records = get_timbang_history(user)
