@@ -35,6 +35,8 @@ from sleep_tracking import (
     delete_oldest_sleep_record
 )
 from session_manager import SessionManager
+from timezone_handler import TimezoneHandler
+
 session_manager = SessionManager(timeout_minutes=30)
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
@@ -46,7 +48,7 @@ logging.basicConfig(
 
 # Initialize FastAPI app
 app = FastAPI(title="Baby Log WhatsApp Chatbot", version="1.0.0")
-session_manager = SessionManager(timeout_minutes=30)
+#session_manager = SessionManager(timeout_minutes=30)
 
 # Database connection function - supports both SQLite (local) and PostgreSQL (Railway)
 def get_db_connection():
@@ -1147,14 +1149,14 @@ def time_in_range(start_str, end_str, check_time):
         return check_time >= start_time or check_time <= end_time
 
 def check_and_send_reminders():
-    """Secure version of check_and_send_reminders"""
+    """Secure version of check_and_send_reminders with proper timezone handling"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
 
     try:
-        now_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
-        now_local = now_utc.astimezone(DEFAULT_TIMEZONE)
+        # Use TimezoneHandler for consistent timezone management
+        now_utc = TimezoneHandler.now_utc()
         
         if database_url:
             conn = get_db_connection()
@@ -1169,6 +1171,8 @@ def check_and_send_reminders():
             import sqlite3
             conn = sqlite3.connect('babylog.db')
             c = conn.cursor()
+            # For SQLite, convert UTC to local for comparison since SQLite stores as local time
+            now_local = TimezoneHandler.now_local("dummy_user")  # Get default timezone
             c.execute(f'''
                 SELECT * FROM {reminder_table} 
                 WHERE is_active=1 AND next_due <= ?
@@ -1186,7 +1190,7 @@ def check_and_send_reminders():
                 interval = reminder['interval_hours']
                 start_str = reminder['start_time']
                 end_str = reminder['end_time']
-                next_due = reminder['next_due'].astimezone(DEFAULT_TIMEZONE)
+                next_due = reminder['next_due']
             else:
                 user = reminder[1]
                 reminder_id = reminder[0]
@@ -1196,23 +1200,25 @@ def check_and_send_reminders():
                 end_str = reminder[5]
                 next_due = reminder[8]
 
+            # Get user's current local time for time window checking
+            user_local_time = TimezoneHandler.now_local(user)
+            
             user_info = get_user_tier(user)
             remaining = 2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'
             
             message = f"""🍼 Pengingat: {reminder_name}
                 
-                ⏰ Waktunya minum susu!
-                
-                Balas cepat:
-                • 'done 120ml' - catat minum
-                • 'snooze 30' - tunda 30 menit  
-                • 'skip' - lewati
-                
-                💡 Sisa pengingat hari ini: {remaining}"""
+⏰ Waktunya minum susu!
 
-            # Only send if inside allowed time window
-            now_for_check = now_utc.astimezone(DEFAULT_TIMEZONE) if database_url else now_local
-            if not time_in_range(start_str, end_str, now_for_check):
+Balas cepat:
+• 'done 120ml' - catat minum
+• 'snooze 30' - tunda 30 menit  
+• 'skip' - lewati
+
+💡 Sisa pengingat hari ini: {remaining}"""
+
+            # Check if within allowed time window using user's local time
+            if not time_in_range(start_str, end_str, user_local_time):
                 send_this = False
             else:
                 if user_info['tier'] == 'free' and user_info['messages_today'] >= 2:
@@ -1222,17 +1228,18 @@ def check_and_send_reminders():
                     send_this = True
 
             if send_this and send_twilio_message(user, message):
-                logging.info(f"Sent reminder to {user} at {now_for_check}")
+                logging.info(f"Sent reminder to {user} at {user_local_time}")
+                # Increment message count after successful send
+                increment_message_count(user)
             else:
-                logging.info(f"Not sending reminder message to {user} at {now_for_check}")
+                logging.info(f"Not sending reminder message to {user} at {user_local_time}")
 
-            # Calculate the next due time
-            if database_url:
-                new_next_due = now_for_check + timedelta(hours=interval)
-            else:
-                new_next_due = now_for_check + timedelta(hours=interval)
+            # Calculate the next due time using user's local time
+            new_next_due = user_local_time + timedelta(hours=interval)
 
+            # Check if new time is outside allowed window
             if not time_in_range(start_str, end_str, new_next_due):
+                # Move to next day's start time
                 next_start = (new_next_due + timedelta(days=1)).replace(
                     hour=int(start_str[:2]), 
                     minute=int(start_str[3:5]), 
@@ -1241,9 +1248,9 @@ def check_and_send_reminders():
                 )
                 new_next_due = next_start
 
-            # Save new_next_due
+            # Convert back to UTC for database storage (PostgreSQL) or keep local (SQLite)
             if database_url:
-                next_due_save = new_next_due.astimezone(pytz.utc)
+                next_due_save = TimezoneHandler.to_utc(new_next_due, user)
                 last_sent_save = now_utc
                 conn = get_db_connection()
                 c = conn.cursor()
@@ -1252,8 +1259,9 @@ def check_and_send_reminders():
                 conn.commit()
                 conn.close()
             else:
+                # SQLite - keep as local time
                 next_due_save = new_next_due
-                last_sent_save = now_local
+                last_sent_save = user_local_time
                 import sqlite3
                 conn = sqlite3.connect('babylog.db')
                 c = conn.cursor()
