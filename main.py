@@ -34,6 +34,8 @@ from sleep_tracking import (
     get_sleep_records_with_limit,
     delete_oldest_sleep_record
 )
+from session_manager import SessionManager
+session_manager = SessionManager(timeout_minutes=30)
 
 DEFAULT_TIMEZONE = pytz.timezone('Asia/Jakarta')  # Change to 'Asia/Makassar' for GMT+8, 'Asia/Jayapura' for GMT+9
 
@@ -44,8 +46,7 @@ logging.basicConfig(
 
 # Initialize FastAPI app
 app = FastAPI(title="Baby Log WhatsApp Chatbot", version="1.0.0")
-user_sessions = {}
-
+session_manager = SessionManager(timeout_minutes=30)
 
 # Database connection function - supports both SQLite (local) and PostgreSQL (Railway)
 def get_db_connection():
@@ -2117,14 +2118,14 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         user = form.get("From")
         msg = form.get("Body", "").strip()
         resp = MessagingResponse()
-        session = user_sessions.get(user, {"state": None, "data": {}})
+        session = session_manager.get_session(user)
         reply = ""
 
         # Universal Commands
         if msg.lower() in ["batal", "cancel"]:
             session["state"] = None
             session["data"] = {}
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message("Sesi dibatalkan. Anda bisa mulai kembali dengan perintah baru.")
             return Response(str(resp), media_type="application/xml")
 
@@ -2160,7 +2161,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             session["data"]["reminder_name"] = msg
             session["state"] = "REMINDER_INTERVAL"
             reply = "Interval berapa jam? (contoh: 2, 3, 4 untuk setiap 2/3/4 jam)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2175,7 +2176,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                     reply = "Masukkan interval antara 1-12 jam."
             except ValueError:
                 reply = "Masukkan angka untuk interval jam."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2187,7 +2188,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
                 session["data"]["start_time"] = msg
                 session["state"] = "REMINDER_END"
                 reply = "Jam berapa berhenti pengingat? (format HH:MM, contoh: 22:00)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2211,7 +2212,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 22:00"
             else:
                 reply = "Format jam tidak valid. Gunakan HH:MM, contoh: 22:00"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2224,7 +2225,7 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"] = {}
                 except ValueError as e:
                     reply = f"❌ {str(e)}"
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 except Exception as e:
@@ -2303,7 +2304,7 @@ Apakah sudah benar? (ya/tidak)"""
         if msg.lower().startswith("set kalori asi"):
             session["state"] = "SET_KALORI_ASI"
             reply = "Masukkan nilai kalori per ml ASI (default 0.67), atau tekan enter untuk default:"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         elif session["state"] == "SET_KALORI_ASI":
@@ -2316,14 +2317,14 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"] = {}
             except Exception:
                 reply = "Format tidak valid. Masukkan angka (contoh: 0.67) atau tekan enter untuk default."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
         if msg.lower().startswith("set kalori sufor"):
             session["state"] = "SET_KALORI_SUFOR"
             reply = "Masukkan nilai kalori per ml susu formula (default 0.7), atau tekan enter untuk default:"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         elif session["state"] == "SET_KALORI_SUFOR":
@@ -2336,7 +2337,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"] = {}
             except Exception:
                 reply = "Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2357,7 +2358,7 @@ Apakah sudah benar? (ya/tidak)"""
             reply = format_summary_message(data, summary_date)
             session["state"] = None
             session["data"] = {}
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2367,7 +2368,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "ADDCHILD_NAME"
             session["data"] = {}
             reply = "Siapa nama anak Anda?"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2375,7 +2376,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["data"]["name"] = msg
             session["state"] = "ADDCHILD_GENDER"
             reply = "Jenis kelamin anak? (laki-laki/perempuan)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2391,7 +2392,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Tanggal lahir? (format: YYYY-MM-DD, contoh: 2019-05-21)"
             else:
                 reply = "Masukkan 'laki-laki' atau 'perempuan' untuk jenis kelamin."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2403,7 +2404,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Tinggi badan anak (cm)? (contoh: 75.5)"
             except ValueError:
                 reply = "Masukkan tanggal dengan format YYYY-MM-DD, contoh: 2019-05-21."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2415,7 +2416,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"]["height_cm"] = float(msg)
                 session["state"] = "ADDCHILD_WEIGHT"
                 reply = "Berat badan? (kg, contoh: 8.4 atau 8500 untuk gram)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2445,7 +2446,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = summary
             except ValueError:
                 reply = "❌ Masukkan angka untuk berat badan, contoh: 8.4 atau 8500."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2459,7 +2460,7 @@ Apakah sudah benar? (ya/tidak)"""
                 except ValueError as e:
                     reply = f"❌ {str(e)}"
                     # Don't reset session, let user fix the error
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 except Exception as e:
@@ -2474,7 +2475,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Input data anak dibatalkan."
             else:
                 reply = "Ketik 'ya' jika data sudah benar, 'ulang' untuk mengisi ulang, atau 'batal' untuk membatalkan."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2484,7 +2485,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = f"Nama: {row[0]}, Jenis kelamin: {row[1].capitalize()}, Tgl lahir: {row[2]}, Tinggi: {row[3]} cm, Berat: {row[4]} kg"
             else:
                 reply = "Data anak belum ada. Silakan ketik 'tambah anak' untuk menambah data anak."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2493,7 +2494,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "TIMBANG_HEIGHT"
             session["data"] = {"date": datetime.now().strftime("%Y-%m-%d")}
             reply = "Tinggi badan (cm)?"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2505,7 +2506,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"]["height_cm"] = float(msg)
                 session["state"] = "TIMBANG_WEIGHT"
                 reply = "Berat badan? (kg)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2541,7 +2542,7 @@ Apakah sudah benar? (ya/tidak)"""
                         logging.error(f"Error saving timbang: {e}")
                         reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
                     
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
             
@@ -2554,7 +2555,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply += "\n(Untuk grafik, integrasikan matplotlib & pengiriman gambar)"
             else:
                 reply = "Belum ada catatan timbang. Ketik 'catat timbang' untuk menambah data."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2563,7 +2564,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "MPASI_DATE"
             session["data"] = {}
             reply = "Tanggal makan? (YYYY-MM-DD, atau ketik 'today')"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2582,7 +2583,7 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"]["date"] = msg
                     session["state"] = "MPASI_TIME"
                     reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2599,7 +2600,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
             else:
                 reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2613,7 +2614,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["data"]["volume_ml"] = float(msg)
                 session["state"] = "MPASI_DETAIL"
                 reply = "Makanan apa saja? (cth: nasi 50gr, ayam 30gr, wortel 20gr)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2622,7 +2623,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["data"]["food_detail"] = InputValidator.sanitize_text_input(msg, 200)
             session["state"] = "MPASI_GRAMS"
             reply = "Masukkan menu dan porsi MPASI (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2643,7 +2644,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Catat MPASI tersimpan! Silahkan cek di lihat ringkasan mpasi."
             except ValueError as e:
                 reply = f"❌ {str(e)}"
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             except Exception as e:
@@ -2652,7 +2653,7 @@ Apakah sudah benar? (ya/tidak)"""
             
             session["state"] = None
             session["data"] = {}
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2672,7 +2673,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = f"Ringkasan MPASI:\nTotal makan: {len(rows)}\nTotal ml: {total_ml}\nEstimasi total kalori: {total_cal}\n"
             else:
                 reply = "Belum ada catat mpasi. Ketik 'catat mpasi' untuk menambah data."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2690,7 +2691,7 @@ Apakah sudah benar? (ya/tidak)"""
                 f"- Susu: {total_cal_susu} kkal\n"
                 f"Total: {total_cal_mpasi + total_cal_susu} kkal"
             )
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2706,7 +2707,7 @@ Apakah sudah benar? (ya/tidak)"""
             milk_types = [r[0] for r in susu_rows if r[0]]
             all_items = list(set(foods + milk_types))
             reply = "Daftar asupan hari ini:\n" + (", ".join(all_items) if all_items else "Belum ada makanan/susu tercatat.")
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2729,7 +2730,7 @@ Apakah sudah benar? (ya/tidak)"""
                 )
             else:
                 reply = "Belum ada log makanan/susu hari ini."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2738,7 +2739,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "POOP_DATE"
             session["data"] = {}
             reply = "Tanggal? (YYYY-MM-DD, atau 'today')"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2751,12 +2752,12 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"]["date"] = msg
                 except ValueError:
                     reply = "Masukkan tanggal dengan format YYYY-MM-DD atau 'today'."
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
             session["state"] = "POOP_TIME"
             reply = "Jam berapa? (format 24 jam, HH:MM, contoh: 07:30 atau 18:45)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -2782,7 +2783,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
             else:
                 reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2805,7 +2806,7 @@ Apakah sudah benar? (ya/tidak)"""
             except Exception as e:
                 logging.error(f"Error saving poop: {e}")
                 reply = "❌ Terjadi kesalahan saat menyimpan data BAB."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2827,7 +2828,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Belum ada log pup. Ketik 'catat bab' untuk menambah data."
                 session["state"] = None
                 session["data"] = {}
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             except Exception as ex:
@@ -2855,7 +2856,7 @@ Apakah sudah benar? (ya/tidak)"""
                     f"• `batal tidur` - Batalkan sesi sebelumnya\n\n"
                     f"Contoh: `selesai tidur 07:30`"
                 )
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -2869,7 +2870,7 @@ Apakah sudah benar? (ya/tidak)"""
                         f"Upgrade ke premium untuk catatan unlimited!\n\n"
                         f"💡 Tip: Hapus catatan lama atau upgrade ke premium untuk melanjutkan."
                     )
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
             
@@ -2901,7 +2902,7 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.error(f"Error starting sleep session for {user}: {e}")
                 reply = "❌ Terjadi kesalahan saat memulai catatan tidur. Silakan coba lagi."
             
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2916,7 +2917,7 @@ Apakah sudah benar? (ya/tidak)"""
                         "Gunakan: `selesai tidur [HH:MM]`\n"
                         "Contoh: `selesai tidur 07:30`"
                     )
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 
@@ -2931,7 +2932,7 @@ Apakah sudah benar? (ya/tidak)"""
                         "Gunakan format HH:MM (24 jam)\n"
                         "Contoh: `selesai tidur 07:30` atau `selesai tidur 19:45`"
                     )
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 
@@ -2950,7 +2951,7 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.error(f"Error completing sleep session for {user}: {e}")
                 reply = "❌ Terjadi kesalahan saat menyelesaikan catatan tidur. Silakan coba lagi."
             
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2962,7 +2963,7 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.error(f"Error canceling sleep session for {user}: {e}")
                 reply = "❌ Terjadi kesalahan saat membatalkan sesi tidur. Silakan coba lagi."
             
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2988,7 +2989,7 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.error(f"Error displaying sleep records for {user}: {e}")
                 reply = "❌ Terjadi kesalahan saat mengambil data tidur. Silakan coba lagi."
             
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -2997,7 +2998,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "PUMP_DATE"
             session["data"] = {}
             reply = "Tanggal pumping? (YYYY-MM-DD, atau 'today')"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -3010,12 +3011,12 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"]["date"] = msg
                 except ValueError:
                     reply = "Masukkan tanggal dengan format YYYY-MM-DD atau 'today'."
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
             session["state"] = "PUMP_TIME"
             reply = "Pukul berapa pumping? (format 24 jam, HH:MM, contoh: 07:30 atau 18:45)"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3031,7 +3032,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
             else:
                 reply = "Masukkan jam dengan format 24 jam, HH:MM, contoh: 07:30 atau 18:45"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3042,7 +3043,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Jumlah ASI dari payudara kanan (ml)?"
             except ValueError:
                 reply = "Masukkan angka untuk ASI payudara kiri (ml)."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3053,7 +3054,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Berapa kantong ASI yang disimpan?"
             except ValueError:
                 reply = "Masukkan angka untuk ASI payudara kanan (ml)."
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3073,7 +3074,7 @@ Apakah sudah benar? (ya/tidak)"""
                 logging.error(f"Error saving pumping: {e}")
                 reply = "❌ Terjadi kesalahan saat menyimpan data pumping."
             
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
@@ -3083,7 +3084,7 @@ Apakah sudah benar? (ya/tidak)"""
             session["state"] = "CALC_MILK_VOL"
             session["data"] = {}
             reply = "Masukkan jumlah susu (ml):"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3094,7 +3095,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = "Jenis susu? (asi/sufor)"
             except ValueError:
                 reply = "Masukkan angka untuk volume susu (ml)!"
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3102,7 +3103,7 @@ Apakah sudah benar? (ya/tidak)"""
             jenis = msg.lower().strip()
             if jenis not in ["asi", "sufor"]:
                 reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             kcal_settings = get_user_calorie_setting(user)
@@ -3115,7 +3116,7 @@ Apakah sudah benar? (ya/tidak)"""
             )
             session["state"] = None
             session["data"] = {}
-            user_sessions[user] = session
+            session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
@@ -3127,7 +3128,7 @@ Apakah sudah benar? (ya/tidak)"""
                 session["state"] = "MILK_DATE"
                 session["data"] = {}
                 reply = "Tanggal minum susu? (YYYY-MM-DD atau 'today')"
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
         
@@ -3140,12 +3141,12 @@ Apakah sudah benar? (ya/tidak)"""
                         session["data"]["date"] = msg
                     except ValueError:
                         reply = "Masukkan tanggal dengan format YYYY-MM-DD atau 'today'."
-                        user_sessions[user] = session
+                        session_manager.update_session(user, state=session["state"], data=session["data"])
                         resp.message(reply)
                         return Response(str(resp), media_type="application/xml")
                 session["state"] = "MILK_TIME"
                 reply = "Jam berapa minum susu? (format 24 jam, HH:MM, contoh: 09:00)"
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
         
@@ -3161,7 +3162,7 @@ Apakah sudah benar? (ya/tidak)"""
                         reply = "Masukkan jam dengan format HH:MM, contoh: 09:00 atau 21:30"
                 else:
                     reply = "Masukkan jam dengan format HH:MM, contoh: 09:00 atau 21:30"
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -3173,7 +3174,7 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"]["volume_ml"] = float(msg)
                     session["state"] = "MILK_TYPE"
                     reply = "Susu apa yang diminum? (asi/sufor)"
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -3200,7 +3201,7 @@ Apakah sudah benar? (ya/tidak)"""
                         )
                 else:
                     reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -3218,7 +3219,7 @@ Apakah sudah benar? (ya/tidak)"""
                     )
                 except Exception:
                     reply = "Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -3230,7 +3231,7 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = "Catatan tambahan? (atau ketik 'skip')"
                 else:
                     reply = "Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             
@@ -3257,14 +3258,14 @@ Apakah sudah benar? (ya/tidak)"""
                     session["data"] = {}
                 except ValueError as e:
                     reply = f"❌ {str(e)}"
-                    user_sessions[user] = session
+                    session_manager.update_session(user, state=session["state"], data=session["data"])
                     resp.message(reply)
                     return Response(str(resp), media_type="application/xml")
                 except Exception as e:
                     logging.error(f"Error saving milk intake: {e}")
                     reply = "❌ Terjadi kesalahan saat menyimpan data minum susu."
                 
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
 
@@ -3284,7 +3285,7 @@ Apakah sudah benar? (ya/tidak)"""
                 reply = format_milk_summary(rows, summary_date)
                 session["state"] = None
                 session["data"] = {}
-                user_sessions[user] = session
+                session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
             except Exception as ex:
@@ -3305,7 +3306,7 @@ Apakah sudah benar? (ya/tidak)"""
             "• tambah anak - daftarkan anak\n"
             "• set reminder susu - buat pengingat"
         )
-        user_sessions[user] = session
+        session_manager.update_session(user, state=session["state"], data=session["data"])
         resp.message(reply)
         return Response(str(resp), media_type="application/xml")
     except Exception as exc:
@@ -3322,6 +3323,56 @@ async def startup_event():
         logging.info("Database tables checked/created successfully.")
     except Exception as e:
         logging.error(f"Error in init_db() at startup: {e}")
+
+# Add these endpoints to your main.py after your existing endpoints
+
+@app.get("/admin/sessions")
+async def get_session_stats():
+    """Admin endpoint to monitor active sessions"""
+    return session_manager.get_stats()
+
+@app.post("/admin/cleanup-sessions")
+async def manual_session_cleanup():
+    """Manually trigger session cleanup"""
+    cleaned = session_manager.cleanup_expired_sessions()
+    return {
+        "cleaned_sessions": cleaned,
+        "timestamp": datetime.now().isoformat(),
+        "message": f"Cleaned up {cleaned} expired sessions"
+    }
+
+@app.get("/health-detailed")
+async def detailed_health_check():
+    """Detailed health check including session info"""
+    try:
+        # Test database connection
+        if os.environ.get('DATABASE_URL'):
+            conn = get_db_connection()
+            conn.close()
+            db_status = "connected"
+        else:
+            import sqlite3
+            conn = sqlite3.connect('babylog.db')
+            conn.close()
+            db_status = "connected"
+        
+        session_stats = session_manager.get_stats()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "database": db_status,
+            "sessions": {
+                "total": session_stats["total_sessions"],
+                "timeout_minutes": session_stats["timeout_minutes"]
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }
 
 # For Railway: do NOT use reload, and always import app from main:app
 if __name__ == "__main__":
