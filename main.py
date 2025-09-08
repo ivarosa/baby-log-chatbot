@@ -36,6 +36,10 @@ from sleep_tracking import (
 )
 from session_manager import SessionManager
 from timezone_handler import TimezoneHandler
+from database_pool import DatabasePool
+
+# Initialize the singleton pool
+db_pool = DatabasePool()
 
 session_manager = SessionManager(timeout_minutes=30)
 
@@ -50,47 +54,26 @@ logging.basicConfig(
 app = FastAPI(title="Baby Log WhatsApp Chatbot", version="1.0.0")
 #session_manager = SessionManager(timeout_minutes=30)
 
-# Database connection function - supports both SQLite (local) and PostgreSQL (Railway)
-def get_db_connection():
-    database_url = os.environ.get('DATABASE_URL')
-    if database_url:
-        # Railway PostgreSQL connection
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        return psycopg.connect(database_url, row_factory=dict_row)
-    else:
-        # Local SQLite fallback (your original setup)
-        import sqlite3
-        return sqlite3.connect('babylog.db')
-
 @app.get("/users")
 def list_users():
-    database_url = os.environ.get("DATABASE_URL")
-    if database_url:
-        # PostgreSQL with psycopg3
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT id, username, email FROM users")
-                results = cur.fetchall()  # Each row is a dict!
-                return {"users": results}
-    else:
-        # SQLite fallback
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT id, username, email FROM users")
-        columns = [desc[0] for desc in cur.description]
-        results = [dict(zip(columns, row)) for row in cur.fetchall()]
-        conn.close()
+    """List users using connection pool"""
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, username, email FROM users")
+        results = c.fetchall()
         return {"users": results}
 
 def execute_query(query, params=None, fetch=False):
-    """Universal query executor for both SQLite and PostgreSQL"""
+    """Universal query executor using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     
-    if database_url:
-        # PostgreSQL mode
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
+        
+        # Adjust query syntax for SQLite vs PostgreSQL
+        if not database_url and params:
+            query = query.replace('%s', '?')
+            
         if params:
             c.execute(query, params)
         else:
@@ -98,36 +81,13 @@ def execute_query(query, params=None, fetch=False):
         
         if fetch:
             if fetch == 'one':
-                result = c.fetchone()
+                return c.fetchone()
             else:
-                result = c.fetchall()
-            conn.close()
-            return result
-        else:
-            conn.commit()
-            conn.close()
-    else:
-        # SQLite mode (your original)
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        if params:
-            c.execute(query, params)
-        else:
-            c.execute(query)
-        
-        if fetch:
-            if fetch == 'one':
-                result = c.fetchone()
-            else:
-                result = c.fetchall()
-            conn.close()
-            return result
-        else:
-            conn.commit()
-            conn.close()
+                return c.fetchall()
+        # Connection commit/rollback handled by context manager
 
 def init_db():
+    """Initialize database tables using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     
     if database_url:
@@ -239,28 +199,10 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )'''
         ]
-        #Add sleep table
-        queries.append(init_sleep_table(database_url))
-
-        conn = get_db_connection()
-        c = conn.cursor()
-        for query in queries:
-            c.execute(query)
-        
-        # Create indexes
-        c.execute('CREATE INDEX IF NOT EXISTS idx_user_phone ON child(user_phone)')
-        c.execute('CREATE INDEX IF NOT EXISTS idx_reminder_due ON milk_reminders(next_due, is_active)')
-        
-        conn.commit()
-        conn.close()
-        
     else:
-        # Original SQLite schema (unchanged)
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS child (
+        # SQLite schema
+        queries = [
+            '''CREATE TABLE IF NOT EXISTS child (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 name TEXT,
@@ -269,10 +211,8 @@ def init_db():
                 height_cm REAL,
                 weight_kg REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS timbang_log (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS timbang_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 date DATE,
@@ -280,10 +220,8 @@ def init_db():
                 weight_kg REAL,
                 head_circum_cm REAL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS mpasi_log (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS mpasi_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 date DATE,
@@ -294,20 +232,16 @@ def init_db():
                 est_calories REAL,
                 gpt_calorie_summary TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS poop_log (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS poop_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 date DATE,
                 time TEXT,
                 bristol_scale INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS pumping_log (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS pumping_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 date DATE,
@@ -316,10 +250,8 @@ def init_db():
                 right_ml REAL,
                 milk_bags INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS milk_intake_log (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS milk_intake_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 date DATE,
@@ -330,17 +262,13 @@ def init_db():
                 sufor_calorie REAL,
                 note TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS calorie_setting (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS calorie_setting (
                 user TEXT PRIMARY KEY,
                 asi_kcal REAL DEFAULT 0.67,
                 sufor_kcal REAL DEFAULT 0.7
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS milk_reminders (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS milk_reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 reminder_name TEXT,
@@ -351,10 +279,8 @@ def init_db():
                 last_sent DATETIME,
                 next_due DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS reminder_logs (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS reminder_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user TEXT,
                 reminder_id INTEGER,
@@ -362,73 +288,98 @@ def init_db():
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 volume_ml REAL,
                 notes TEXT
-            )
-        ''')
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS user_tiers (
+            )''',
+            '''CREATE TABLE IF NOT EXISTS user_tiers (
                 user TEXT PRIMARY KEY,
                 tier TEXT DEFAULT 'free',
                 messages_today INTEGER DEFAULT 0,
                 last_reset DATE DEFAULT CURRENT_DATE,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        #Add sleep table for SQLite
-        c.execute(init_sleep_table(database_url))
+            )'''
+        ]
 
-        conn.commit()
-        conn.close()
+    # Add sleep table
+    from sleep_tracking import init_sleep_table
+    queries.append(init_sleep_table(database_url))
+
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        for query in queries:
+            c.execute(query)
+        
+        # Create indexes
+        if database_url:
+            c.execute('CREATE INDEX IF NOT EXISTS idx_user_phone ON child(user_phone)')
+        else:
+            c.execute('CREATE INDEX IF NOT EXISTS idx_user ON child(user)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_reminder_due ON milk_reminders(next_due, is_active)')
 
 # Initialize database
 init_db()
 
 # Cost control functions (new for Railway)
 def get_user_tier(user):
-    """Secure version of get_user_tier with SQL injection protection"""
-    import os
+    """Secure version of get_user_tier with connection pooling"""
     from datetime import date
     database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)  # ← SECURITY ADDITION
-    table_name = DatabaseSecurity.validate_table_name('user_tiers')  # ← SECURITY ADDITION
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('user_tiers')
     
     try:
-        if database_url:
-            conn = get_db_connection()
+        with db_pool.get_connection() as conn:
             c = conn.cursor()
-            # Use validated names instead of dynamic string formatting
-            c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=%s', (user,))
+            
+            if database_url:
+                c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=%s', (user,))
+            else:
+                c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=?', (user,))
+            
             row = c.fetchone()
             
             if not row:
-                c.execute(f'''
-                    INSERT INTO {table_name} ({user_col}, tier, messages_today, last_reset) 
-                    VALUES (%s, %s, %s, %s)
-                ''', (user, 'free', 0, date.today()))
-                conn.commit()
+                # Insert new user
+                if database_url:
+                    c.execute(f'''
+                        INSERT INTO {table_name} ({user_col}, tier, messages_today, last_reset) 
+                        VALUES (%s, %s, %s, %s)
+                    ''', (user, 'free', 0, date.today()))
+                else:
+                    c.execute(f'''
+                        INSERT INTO {table_name} ({user_col}, tier, messages_today, last_reset) 
+                        VALUES (?, ?, ?, ?)
+                    ''', (user, 'free', 0, date.today()))
                 result = {'tier': 'free', 'messages_today': 0}
             else:
-                if row['last_reset'] != date.today():
-                    c.execute(f'''
-                        UPDATE {table_name} 
-                        SET messages_today=0, last_reset=%s 
-                        WHERE {user_col}=%s
-                    ''', (date.today(), user))
-                    conn.commit()
-                    result = {'tier': row['tier'], 'messages_today': 0}
+                # Check if need to reset daily count
+                if isinstance(row, dict):  # PostgreSQL
+                    last_reset = row['last_reset']
+                    tier = row['tier']
+                    messages_today = row['messages_today']
+                else:  # SQLite
+                    last_reset = row[2]
+                    tier = row[0]
+                    messages_today = row[1]
+                
+                if last_reset != date.today():
+                    # Reset daily count
+                    if database_url:
+                        c.execute(f'''
+                            UPDATE {table_name} 
+                            SET messages_today=0, last_reset=%s 
+                            WHERE {user_col}=%s
+                        ''', (date.today(), user))
+                    else:
+                        c.execute(f'''
+                            UPDATE {table_name} 
+                            SET messages_today=0, last_reset=? 
+                            WHERE {user_col}=?
+                        ''', (date.today(), user))
+                    result = {'tier': tier, 'messages_today': 0}
                 else:
-                    result = dict(row)
-            conn.close()
-        else:
-            # SQLite version (similar pattern)
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            c.execute(f'SELECT tier, messages_today, last_reset FROM {table_name} WHERE {user_col}=?', (user,))
-            # ... rest of SQLite logic
-            
+                    result = {'tier': tier, 'messages_today': messages_today}
+        
         return result
     except Exception as e:
-        import logging
         logging.error(f"Error getting user tier: {e}")
         return {'tier': 'free', 'messages_today': 0}
 
@@ -441,63 +392,61 @@ def can_send_reminder(user):
         return user_info['messages_today'] < 2  # Free tier limit
 
 def increment_message_count(user):
-    """Secure version of increment_message_count"""
+    """Secure version of increment_message_count with connection pooling"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('user_tiers')
     
     try:
-        if database_url:
-            conn = get_db_connection()
+        with db_pool.get_connection() as conn:
             c = conn.cursor()
-            c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=%s', (user,))
-            conn.commit()
-            conn.close()
-        else:
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=?', (user,))
-            conn.commit()
-            conn.close()
+            if database_url:
+                c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=%s', (user,))
+            else:
+                c.execute(f'UPDATE {table_name} SET messages_today = messages_today + 1 WHERE {user_col}=?', (user,))
     except Exception as e:
         logging.error(f"Error incrementing message count: {e}")
 
 def check_subscription_status(user):
-    """Check if user has an active premium subscription"""
+    """Check if user has an active premium subscription with connection pooling"""
     database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)  # ← ADD SECURITY
-    subscription_table = DatabaseSecurity.validate_table_name('user_subscriptions')  # ← ADD SECURITY
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    subscription_table = DatabaseSecurity.validate_table_name('user_subscriptions')
     
-    conn = get_db_connection()
-    c = conn.cursor()
-    
-    # First check user_subscriptions table for active subscription  
-    c.execute(f'''
-        SELECT subscription_tier, subscription_end 
-        FROM {subscription_table} 
-        WHERE {user_col}=%s
-    ''', (user,))
-    
-    subscription = c.fetchone()
-    
-    if subscription:
-        # Check if subscription is valid
-        if isinstance(subscription, dict):  # PostgreSQL
-            tier = subscription['subscription_tier'] 
-            end_date = subscription['subscription_end']
-        else:  # SQLite
-            tier = subscription[0]
-            end_date = subscription[1]
-            
-        if tier == 'premium' and end_date and end_date > datetime.now():
-            # Valid premium subscription
-            conn.close()
-            return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        
+        # Check user_subscriptions table for active subscription
+        if database_url:
+            c.execute(f'''
+                SELECT subscription_tier, subscription_end 
+                FROM {subscription_table} 
+                WHERE {user_col}=%s
+            ''', (user,))
+        else:
+            c.execute(f'''
+                SELECT subscription_tier, subscription_end 
+                FROM {subscription_table} 
+                WHERE {user_col}=?
+            ''', (user,))
+        
+        subscription = c.fetchone()
+        
+        if subscription:
+            # Check if subscription is valid
+            if isinstance(subscription, dict):  # PostgreSQL
+                tier = subscription['subscription_tier'] 
+                end_date = subscription['subscription_end']
+            else:  # SQLite
+                tier = subscription[0]
+                end_date = subscription[1]
+                
+            if tier == 'premium' and end_date and end_date > datetime.now():
+                # Valid premium subscription
+                return {'tier': 'premium', 'valid_until': end_date, 'messages_today': 0}
     
     # If no valid subscription found, fall back to user_tiers table
-    conn.close()
-    return get_user_tier(user)  # ← USE SECURE VERSION
+    return get_user_tier(user)
     
 def get_tier_limits(user):
     user_info = check_subscription_status(user)  # This now calls secure functions
@@ -671,7 +620,9 @@ def complete_sleep_session(user, sleep_id, end_time):
         return "❌ Terjadi kesalahan sistem saat menyimpan catatan tidur."
         
 def cancel_sleep_session(user):
-    """Secure version of cancel_sleep_session"""
+    """Cancel sleep session using connection pool"""
+    from sleep_tracking import get_latest_open_sleep_id
+    
     sleep_id = get_latest_open_sleep_id(user)
     if not sleep_id:
         return "❌ Tidak ada sesi tidur yang sedang berlangsung."
@@ -682,19 +633,12 @@ def cancel_sleep_session(user):
     table_name = DatabaseSecurity.validate_table_name('sleep_log')
     
     try:
-        if database_url:
-            conn = get_db_connection()
+        with db_pool.get_connection() as conn:
             c = conn.cursor()
-            c.execute(f'DELETE FROM {table_name} WHERE id=%s', (sleep_id,))
-            conn.commit()
-            conn.close()
-        else:
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            c.execute(f'DELETE FROM {table_name} WHERE id=?', (sleep_id,))
-            conn.commit()
-            conn.close()
+            if database_url:
+                c.execute(f'DELETE FROM {table_name} WHERE id=%s', (sleep_id,))
+            else:
+                c.execute(f'DELETE FROM {table_name} WHERE id=?', (sleep_id,))
         return "✅ Sesi tidur yang belum selesai telah dibatalkan."
     except Exception as e:
         logging.error(f"Error canceling sleep session: {e}")
@@ -803,45 +747,34 @@ def format_sleep_display(user, show_history=False):
 
 # Your existing database functions (adapted for both SQLite and PostgreSQL)
 def get_user_calorie_setting(user):
-    """Secure version of get_user_calorie_setting"""
+    """Get user calorie setting using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('calorie_setting')
     
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=%s', (user,))
+        if database_url:
+            c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=%s', (user,))
+        else:
+            c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=?', (user,))
+        
         row = c.fetchone()
         if row:
-            conn.close()
-            return {"asi": row['asi_kcal'], "sufor": row['sufor_kcal']}
+            if isinstance(row, dict):  # PostgreSQL
+                return {"asi": row['asi_kcal'], "sufor": row['sufor_kcal']}
+            else:  # SQLite
+                return {"asi": row[0], "sufor": row[1]}
         else:
-            c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (%s)', (user,))
-            conn.commit()
-            conn.close()
+            # Insert default values
+            if database_url:
+                c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (%s)', (user,))
+            else:
+                c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (?)', (user,))
             return {"asi": 0.67, "sufor": 0.7}
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=?', (user,))
-        row = c.fetchone()
-        if row:
-            conn.close()
-            return {"asi": row[0], "sufor": row[1]}
-        else:
-            c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (?)', (user,))
-            conn.commit()
-            conn.close()
-            return {"asi": 0.67, "sufor": 0.7}
-            
+
 def set_user_calorie_setting(user, milk_type, value):
-    """Secure version of set_user_calorie_setting"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('calorie_setting')
-    
+    """Set user calorie setting using connection pool with validation"""
     # Validate milk_type
     if milk_type not in ["asi", "sufor"]:
         raise ValueError(f"Invalid milk_type: {milk_type}")
@@ -854,34 +787,40 @@ def set_user_calorie_setting(user, milk_type, value):
     except (ValueError, TypeError):
         raise ValueError(f"Invalid calorie value: {value}")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('calorie_setting')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
         if milk_type == "asi":
-            c.execute(f'UPDATE {table_name} SET asi_kcal=%s WHERE {user_col}=%s', (value, user))
+            if database_url:
+                c.execute(f'UPDATE {table_name} SET asi_kcal=%s WHERE {user_col}=%s', (value, user))
+            else:
+                c.execute(f'UPDATE {table_name} SET asi_kcal=? WHERE {user_col}=?', (value, user))
         elif milk_type == "sufor":
-            c.execute(f'UPDATE {table_name} SET sufor_kcal=%s WHERE {user_col}=%s', (value, user))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        if milk_type == "asi":
-            c.execute(f'UPDATE {table_name} SET asi_kcal=? WHERE {user_col}=?', (value, user))
-        elif milk_type == "sufor":
-            c.execute(f'UPDATE {table_name} SET sufor_kcal=? WHERE {user_col}=?', (value, user))
-        conn.commit()
-        conn.close()
+            if database_url:
+                c.execute(f'UPDATE {table_name} SET sufor_kcal=%s WHERE {user_col}=%s', (value, user))
+            else:
+                c.execute(f'UPDATE {table_name} SET sufor_kcal=? WHERE {user_col}=?', (value, user))
 
-def save_child(user, data):
-    """Secure version of save_child"""
-    import os
+def get_child(user):
+    """Get child data using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('child')
     
-    # Validate input data
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'SELECT name, gender, dob, height_cm, weight_kg FROM {table_name} WHERE {user_col}=%s ORDER BY created_at DESC LIMIT 1', (user,))
+        else:
+            c.execute(f'SELECT name, gender, dob, height_cm, weight_kg FROM {table_name} WHERE {user_col}=? ORDER BY created_at DESC LIMIT 1', (user,))
+        return c.fetchone()
+
+def save_child(user, data):
+    """Save child data using connection pool with validation"""
+    # Validate input data first
     is_valid, error_msg = InputValidator.validate_date(data['dob'])
     if not is_valid:
         raise ValueError(f"Invalid date: {error_msg}")
@@ -897,71 +836,27 @@ def save_child(user, data):
     # Sanitize text inputs
     data['name'] = InputValidator.sanitize_text_input(data['name'], 100)
     
-    # ... rest of the function
-def get_child(user):
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)  # Validated!
-    table_name = DatabaseSecurity.validate_table_name('child')
-    
-    if database_url:
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute(f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=%s ORDER BY created_at DESC LIMIT 1', (user,))
-        row = c.fetchone()
-        conn.close()
-        return row
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'SELECT name, gender, dob, height_cm, weight_kg FROM child WHERE {user_col}=? ORDER BY created_at DESC LIMIT 1', (user,))
-        row = c.fetchone()
-        conn.close()
-        return row
-
-def save_child(user, data):
-    """Secure version of save_child"""
-    import os
+    # Database operations
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('child')
     
-    # Validate input data
-    is_valid, error_msg = InputValidator.validate_date(data['dob'])
-    if not is_valid:
-        raise ValueError(f"Invalid date: {error_msg}")
-    
-    is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
-    if not is_valid:
-        raise ValueError(f"Invalid weight: {error_msg}")
-    
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
-        conn.commit()
-        conn.close()
-
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, name, gender, dob, height_cm, weight_kg)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
+            
 # Continue with your existing functions, but adapt database queries...
 def save_timbang(user, data):
-    """Secure version of save_timbang"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('timbang_log')
-    
+    """Save timbang data using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
@@ -987,28 +882,25 @@ def save_timbang(user, data):
     except (ValueError, TypeError):
         raise ValueError("Invalid head circumference value")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('timbang_log')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
-            VALUES (%s, %s, %s, %s, %s)
-        ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
-        conn.commit()
-        conn.close()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, height_cm, weight_kg, head_circum_cm)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
 
 def get_timbang_history(user, limit=None):
-    """Secure version of get_timbang_history"""
+    """Get timbang history using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('timbang_log')
@@ -1028,30 +920,19 @@ def get_timbang_history(user, limit=None):
         query += ' LIMIT %s'
         params.append(limit)
     
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        query = query.replace('%s', '?')  # For SQLite
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        if database_url:
+            c.execute(query, tuple(params))
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        return c.fetchall()
         
 # Reminder functions (adapted from your original script)
 def save_reminder(user, data):
-    """Secure version of save_reminder"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
-    
+    """Save reminder using connection pool with validation"""
     # Validate input data
     try:
         # Validate interval
@@ -1077,65 +958,56 @@ def save_reminder(user, data):
     if start_datetime <= datetime.now():
         start_datetime += timedelta(days=1)
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} 
-            ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} 
-            ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
-        conn.commit()
-        conn.close()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
 
 def get_user_reminders(user, active_only=True):
-    """Secure version of get_user_reminders"""
+    """Get user reminders using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('milk_reminders')
     limits = get_tier_limits(user)
     active_reminder_limit = limits.get("active_reminders")  # None for premium, 3 for free
 
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
         query = f'SELECT * FROM {table_name} WHERE {user_col}=%s'
         params = [user]
+        
         if active_only:
-            query += ' AND is_active=TRUE'
+            if database_url:
+                query += ' AND is_active=TRUE'
+            else:
+                query += ' AND is_active=1'
+        
         if active_reminder_limit is not None:
             query += ' LIMIT %s'
             params.append(active_reminder_limit)
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        query = f'SELECT * FROM {table_name} WHERE {user_col}=?'
-        params = [user]
-        if active_only:
-            query += ' AND is_active=1'
-        if active_reminder_limit is not None:
-            query += ' LIMIT ?'
-            params.append(active_reminder_limit)
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        
+        if database_url:
+            c.execute(query, params)
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        
+        return c.fetchall()
 
 def time_in_range(start_str, end_str, check_time):
     """Check if check_time (datetime) is within start and end (HH:MM strings) in local time."""
@@ -1149,36 +1021,32 @@ def time_in_range(start_str, end_str, check_time):
         return check_time >= start_time or check_time <= end_time
 
 def check_and_send_reminders():
-    """Secure version of check_and_send_reminders with proper timezone handling"""
+    """Check and send reminders using connection pool with proper timezone handling"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
 
     try:
         # Use TimezoneHandler for consistent timezone management
+        from timezone_handler import TimezoneHandler
         now_utc = TimezoneHandler.now_utc()
         
-        if database_url:
-            conn = get_db_connection()
+        with db_pool.get_connection() as conn:
             c = conn.cursor()
-            c.execute(f'''
-                SELECT * FROM {reminder_table} 
-                WHERE is_active=TRUE AND next_due <= %s
-            ''', (now_utc,))
+            if database_url:
+                c.execute(f'''
+                    SELECT * FROM {reminder_table} 
+                    WHERE is_active=TRUE AND next_due <= %s
+                ''', (now_utc,))
+            else:
+                # For SQLite, convert UTC to local for comparison since SQLite stores as local time
+                now_local = TimezoneHandler.now_local("dummy_user")  # Get default timezone
+                c.execute(f'''
+                    SELECT * FROM {reminder_table} 
+                    WHERE is_active=1 AND next_due <= ?
+                ''', (now_local,))
+            
             due_reminders = c.fetchall()
-            conn.close()
-        else:
-            import sqlite3
-            conn = sqlite3.connect('babylog.db')
-            c = conn.cursor()
-            # For SQLite, convert UTC to local for comparison since SQLite stores as local time
-            now_local = TimezoneHandler.now_local("dummy_user")  # Get default timezone
-            c.execute(f'''
-                SELECT * FROM {reminder_table} 
-                WHERE is_active=1 AND next_due <= ?
-            ''', (now_local,))
-            due_reminders = c.fetchall()
-            conn.close()
         
         logging.info(f"Found {len(due_reminders)} due reminders")
 
@@ -1218,6 +1086,7 @@ Balas cepat:
 💡 Sisa pengingat hari ini: {remaining}"""
 
             # Check if within allowed time window using user's local time
+            from main import time_in_range  # Import the function
             if not time_in_range(start_str, end_str, user_local_time):
                 send_this = False
             else:
@@ -1227,10 +1096,12 @@ Balas cepat:
                 else:
                     send_this = True
 
-            if send_this and send_twilio_message(user, message):
-                logging.info(f"Sent reminder to {user} at {user_local_time}")
-                # Increment message count after successful send
-                increment_message_count(user)
+            if send_this:
+                from send_twilio_message import send_twilio_message
+                if send_twilio_message(user, message):
+                    logging.info(f"Sent reminder to {user} at {user_local_time}")
+                    # Increment message count after successful send
+                    increment_message_count(user)
             else:
                 logging.info(f"Not sending reminder message to {user} at {user_local_time}")
 
@@ -1249,26 +1120,19 @@ Balas cepat:
                 new_next_due = next_start
 
             # Convert back to UTC for database storage (PostgreSQL) or keep local (SQLite)
-            if database_url:
-                next_due_save = TimezoneHandler.to_utc(new_next_due, user)
-                last_sent_save = now_utc
-                conn = get_db_connection()
+            with db_pool.get_connection() as conn:
                 c = conn.cursor()
-                c.execute(f'UPDATE {reminder_table} SET next_due=%s, last_sent=%s WHERE id=%s',
-                        (next_due_save, last_sent_save, reminder_id))
-                conn.commit()
-                conn.close()
-            else:
-                # SQLite - keep as local time
-                next_due_save = new_next_due
-                last_sent_save = user_local_time
-                import sqlite3
-                conn = sqlite3.connect('babylog.db')
-                c = conn.cursor()
-                c.execute(f'UPDATE {reminder_table} SET next_due=?, last_sent=? WHERE id=?',
-                        (next_due_save, last_sent_save, reminder_id))
-                conn.commit()
-                conn.close()
+                if database_url:
+                    next_due_save = TimezoneHandler.to_utc(new_next_due, user)
+                    last_sent_save = now_utc
+                    c.execute(f'UPDATE {reminder_table} SET next_due=%s, last_sent=%s WHERE id=%s',
+                            (next_due_save, last_sent_save, reminder_id))
+                else:
+                    # SQLite - keep as local time
+                    next_due_save = new_next_due
+                    last_sent_save = user_local_time
+                    c.execute(f'UPDATE {reminder_table} SET next_due=?, last_sent=? WHERE id=?',
+                            (next_due_save, last_sent_save, reminder_id))
 
     except Exception as e:
         logging.error(f"Error checking reminders: {e}")
@@ -1290,12 +1154,7 @@ def start_reminder_scheduler():
 
 # Continue with all your existing functions...
 def save_mpasi(user, data):
-    """Secure version of save_mpasi"""
-    print(f"[DB] Saving MPASI for {user}: {data}")
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
-    
+    """Save MPASI data using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
@@ -1309,74 +1168,78 @@ def save_mpasi(user, data):
     if not is_valid:
         raise ValueError(f"Invalid volume: {error_msg}")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
-        conn.commit()
-        conn.close()
-        
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, volume_ml, food_detail, food_grams, est_calories)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
+
 def get_mpasi_summary(user, period_start=None, period_end=None):
-    """Secure version of get_mpasi_summary"""
+    """Get MPASI summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('mpasi_log')
     limits = get_tier_limits(user)
     mpasi_limit = limits.get("mpasi_entries")
 
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
         query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM {table_name} WHERE {user_col}=%s'
         params = [user]
+        
         if period_start and period_end:
             query += ' AND date BETWEEN %s AND %s'
             params += [period_start, period_end]
+        
         query += ' ORDER BY date DESC, time DESC'
+        
         if mpasi_limit is not None:
             query += ' LIMIT %s'
             params.append(mpasi_limit)
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        query = f'SELECT date, time, volume_ml, food_detail, food_grams, est_calories FROM {table_name} WHERE {user_col}=?'
-        params = [user]
-        if period_start and period_end:
-            query += ' AND date BETWEEN ? AND ?'
-            params += [period_start, period_end]
-        query += ' ORDER BY date DESC, time DESC'
-        if mpasi_limit is not None:
-            query += ' LIMIT ?'
-            params.append(mpasi_limit)
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        
+        if database_url:
+            c.execute(query, params)
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        
+        return c.fetchall()
 
-def save_poop(user, data):
-    """Secure version of save_poop"""
+def update_mpasi_with_calories(user, data, gpt_summary, est_calories):
+    """Update MPASI with calories using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('poop_log')
+    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
     
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(
+                f"""UPDATE {table_name} SET gpt_calorie_summary=%s, est_calories=%s
+                    WHERE {user_col}=%s AND date=%s AND time=%s""",
+                (gpt_summary, est_calories, user, data['date'], data['time'])
+            )
+        else:
+            c.execute(
+                f"""UPDATE {table_name} SET gpt_calorie_summary=?, est_calories=?
+                    WHERE {user_col}=? AND date=? AND time=?""",
+                (gpt_summary, est_calories, user, data['date'], data['time'])
+            )
+            
+def save_poop(user, data):
+    """Save poop data using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
@@ -1394,28 +1257,25 @@ def save_poop(user, data):
     except (ValueError, TypeError):
         raise ValueError("Invalid Bristol scale value")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('poop_log')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
-            VALUES (%s, %s, %s, %s)
-        ''', (user, data['date'], data['time'], data['bristol_scale']))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
-            VALUES (?, ?, ?, ?)
-        ''', (user, data['date'], data['time'], data['bristol_scale']))
-        conn.commit()
-        conn.close()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
+                VALUES (%s, %s, %s, %s)
+            ''', (user, data['date'], data['time'], data['bristol_scale']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
+                VALUES (?, ?, ?, ?)
+            ''', (user, data['date'], data['time'], data['bristol_scale']))
 
 def get_poop_log(user, period_start=None, period_end=None):
-    """Secure version of get_poop_log"""
+    """Get poop log using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('poop_log')
@@ -1427,43 +1287,33 @@ def get_poop_log(user, period_start=None, period_end=None):
         period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
         period_end = datetime.now().strftime('%Y-%m-%d')
 
-    query = f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=%s" if database_url else f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=?"
+    query = f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=%s"
     params = [user]
 
     # Add date range filter if specified
     if period_start and period_end:
-        query += " AND date BETWEEN %s AND %s" if database_url else " AND date BETWEEN ? AND ?"
+        query += " AND date BETWEEN %s AND %s"
         params += [period_start, period_end]
 
     query += " ORDER BY date DESC, time DESC"
 
     # Only add LIMIT if not premium or if a row limit is set
     if poop_log_limit:
-        query += " LIMIT %s" if database_url else " LIMIT ?"
+        query += " LIMIT %s"
         params.append(poop_log_limit)
 
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        if database_url:
+            c.execute(query, tuple(params))
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        return c.fetchall()
 
 def save_milk_intake(user, data):
-    """Secure version of save_milk_intake"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('milk_intake_log')
-    
+    """Save milk intake using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
@@ -1481,30 +1331,27 @@ def save_milk_intake(user, data):
     if data['milk_type'] not in ['asi', 'sufor', 'mixed']:
         raise ValueError(f"Invalid milk_type: {data['milk_type']}")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_intake_log')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
-              data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
-              data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
-        conn.commit()
-        conn.close()
-        
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
+                  data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, volume_ml, milk_type, asi_method, sufor_calorie, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
+                  data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
+
 def get_milk_intake_summary(user, period_start=None, period_end=None):
-    """Secure version of get_milk_intake_summary"""
+    """Get milk intake summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('milk_intake_log')
@@ -1517,8 +1364,7 @@ def get_milk_intake_summary(user, period_start=None, period_end=None):
             period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
             period_end = datetime.now().strftime('%Y-%m-%d')
     
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
         query = f'''
             SELECT milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)
@@ -1530,28 +1376,15 @@ def get_milk_intake_summary(user, period_start=None, period_end=None):
             query += ' AND date BETWEEN %s AND %s'
             params += [period_start, period_end]
         query += ' GROUP BY milk_type, asi_method'
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        query = f'''
-            SELECT milk_type, asi_method, COUNT(*), SUM(volume_ml), SUM(sufor_calorie)
-            FROM {table_name}
-            WHERE {user_col}=?
-        '''
-        params = [user]
-        if period_start and period_end:
-            query += ' AND date BETWEEN ? AND ?'
-            params += [period_start, period_end]
-        query += ' GROUP BY milk_type, asi_method'
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        
+        if database_url:
+            c.execute(query, params)
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        
+        return c.fetchall()
 
 def format_milk_summary(rows, summary_date):
     if not rows:
@@ -1619,11 +1452,7 @@ def format_milk_summary(rows, summary_date):
     return "\n".join(lines)
     
 def save_pumping(user, data):
-    """Secure version of save_pumping"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('pumping_log')
-    
+    """Save pumping data using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
@@ -1654,36 +1483,32 @@ def save_pumping(user, data):
     except (ValueError, TypeError):
         raise ValueError("Invalid milk bags value")
     
-    if database_url:
-        conn = get_db_connection()
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('pumping_log')
+    
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
-        conn.commit()
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        c.execute(f'''
-            INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
-        conn.commit()
-        conn.close()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, left_ml, right_ml, milk_bags)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
 
 def get_pumping_summary(user, period_start=None, period_end=None):
-    """Secure version of get_pumping_summary"""
+    """Get pumping summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('pumping_log')
     limits = get_tier_limits(user)
     pumping_limit = limits.get("pumping_entries")
 
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
         query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM {table_name} WHERE {user_col}=%s'
         params = [user]
@@ -1694,30 +1519,18 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         if pumping_limit is not None:
             query += ' LIMIT %s'
             params.append(pumping_limit)
-        c.execute(query, params)
-        rows = c.fetchall()
-        conn.close()
-        return rows
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        query = f'SELECT date, time, left_ml, right_ml, milk_bags FROM {table_name} WHERE {user_col}=?'
-        params = [user]
-        if period_start and period_end:
-            query += ' AND date BETWEEN ? AND ?'
-            params += [period_start, period_end]
-        query += ' ORDER BY date DESC, time DESC'
-        if pumping_limit is not None:
-            query += ' LIMIT ?'
-            params.append(pumping_limit)
-        c.execute(query, tuple(params))
-        rows = c.fetchall()
-        conn.close()
-        return rows
+        
+        if database_url:
+            c.execute(query, params)
+        else:
+            # Convert query for SQLite
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        
+        return c.fetchall()
 
 def get_daily_summary(user, summary_date):
-    """Secure version of get_daily_summary"""
+    """Get daily summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     
@@ -1728,67 +1541,61 @@ def get_daily_summary(user, summary_date):
     poop_table = DatabaseSecurity.validate_table_name('poop_log')
     sleep_table = DatabaseSecurity.validate_table_name('sleep_log')
 
-    if database_url:
-        conn = get_db_connection()
+    with db_pool.get_connection() as conn:
         c = conn.cursor()
+        
         # Pumping summary
-        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        if database_url:
+            c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        else:
+            c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         pump = c.fetchone() or (0, 0, 0, 0)
+        
         # MPASI summary
-        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        if database_url:
+            c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        else:
+            c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         mpasi = c.fetchone() or (0, 0, 0)
+        
         # Growth summary
-        c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=%s AND date=%s ORDER BY created_at DESC LIMIT 1', (user, summary_date))
+        if database_url:
+            c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=%s AND date=%s ORDER BY created_at DESC LIMIT 1', (user, summary_date))
+        else:
+            c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=? AND date=? ORDER BY created_at DESC LIMIT 1', (user, summary_date))
         growth = c.fetchone() or (None, None)
+        
         # Poop summary
-        c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        if database_url:
+            c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=%s AND date=%s', (user, summary_date))
+        else:
+            c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=? AND date=?', (user, summary_date))
         poop = c.fetchone() or (0,)
+        
         # Sleep summary
-        c.execute(f'''
-            SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
-            FROM {sleep_table} 
-            WHERE {user_col}=%s AND date=%s AND is_complete=TRUE
-        ''', (user, summary_date))
-        sleep_data = c.fetchone() or {'sessions': 0, 'total_minutes': 0}
-        conn.close()
-    else:
-        import sqlite3
-        conn = sqlite3.connect('babylog.db')
-        c = conn.cursor()
-        # Pumping summary
-        c.execute(f'SELECT SUM(left_ml), SUM(right_ml), COUNT(*), SUM(milk_bags) FROM {pumping_table} WHERE {user_col}=? AND date=?', (user, summary_date))
-        pump = c.fetchone() or (0, 0, 0, 0)
-        # MPASI summary
-        c.execute(f'SELECT COUNT(*), SUM(volume_ml), SUM(est_calories) FROM {mpasi_table} WHERE {user_col}=? AND date=?', (user, summary_date))
-        mpasi = c.fetchone() or (0, 0, 0)
-        # Growth summary
-        c.execute(f'SELECT weight_kg, height_cm FROM {timbang_table} WHERE {user_col}=? AND date=? ORDER BY created_at DESC LIMIT 1', (user, summary_date))
-        growth = c.fetchone() or (None, None)
-        # Poop summary
-        c.execute(f'SELECT COUNT(*) FROM {poop_table} WHERE {user_col}=? AND date=?', (user, summary_date))
-        poop = c.fetchone() or (0,)
-        # Sleep summary
-        c.execute(f'''
-            SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
-            FROM {sleep_table} 
-            WHERE {user_col}=? AND date=? AND is_complete=1
-        ''', (user, summary_date))
+        if database_url:
+            c.execute(f'''
+                SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
+                FROM {sleep_table} 
+                WHERE {user_col}=%s AND date=%s AND is_complete=TRUE
+            ''', (user, summary_date))
+        else:
+            c.execute(f'''
+                SELECT COUNT(*) as sessions, SUM(duration_minutes) as total_minutes 
+                FROM {sleep_table} 
+                WHERE {user_col}=? AND date=? AND is_complete=1
+            ''', (user, summary_date))
         sleep_row = c.fetchone()
-        sleep_data = {
-            'sessions': sleep_row[0] if sleep_row else 0,
-            'total_minutes': sleep_row[1] if sleep_row and sleep_row[1] else 0
-        }
-        conn.close()
-
-    # Process sleep data for consistent format
-    if isinstance(sleep_data, dict):
-        sleep_sessions = sleep_data.get('sessions', 0)
-        sleep_minutes = sleep_data.get('total_minutes', 0) or 0
-    else:
-        sleep_sessions = sleep_data[0] if sleep_data else 0
-        sleep_minutes = sleep_data[1] if sleep_data and len(sleep_data) > 1 else 0
-    
-    sleep_hours, sleep_mins = divmod(int(sleep_minutes), 60)
+        
+        # Process sleep data for consistent format
+        if isinstance(sleep_row, dict):
+            sleep_sessions = sleep_row.get('sessions', 0)
+            sleep_minutes = sleep_row.get('total_minutes', 0) or 0
+        else:
+            sleep_sessions = sleep_row[0] if sleep_row else 0
+            sleep_minutes = sleep_row[1] if sleep_row and len(sleep_row) > 1 else 0
+        
+        sleep_hours, sleep_mins = divmod(int(sleep_minutes), 60)
 
     return {
         "pumping_count": pump[2] if len(pump) > 2 else 0,
@@ -1830,29 +1637,6 @@ def extract_total_calories(gpt_summary):
     import re
     match = re.search(r"Total:\s*(\d+)\s*kkal", gpt_summary or "", re.IGNORECASE)
     return int(match.group(1)) if match else None
-
-def update_mpasi_with_calories(user, data, gpt_summary, est_calories):
-    """Secure version of update_mpasi_with_calories"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('mpasi_log')
-    
-    conn = get_db_connection()
-    c = conn.cursor()
-    if database_url:
-        c.execute(
-            f"""UPDATE {table_name} SET gpt_calorie_summary=%s, est_calories=%s
-                WHERE {user_col}=%s AND date=%s AND time=%s""",
-            (gpt_summary, est_calories, user, data['date'], data['time'])
-        )
-    else:
-        c.execute(
-            f"""UPDATE {table_name} SET gpt_calorie_summary=?, est_calories=?
-                WHERE {user_col}=? AND date=? AND time=?""",
-            (gpt_summary, est_calories, user, data['date'], data['time'])
-        )
-    conn.commit()
-    conn.close()
 
 def send_calorie_summary_and_update(user, data):
     try:
@@ -2008,16 +1792,28 @@ async def health_check():
 # FastAPI startup event
 @app.on_event("startup")
 async def startup_event():
-    """Initialize app on startup"""
+    """Initialize app on startup with connection pooling"""
     try:
+        # Initialize database tables
+        init_db()
+        
         # Start reminder scheduler only in production (Railway)
         if os.environ.get('DATABASE_URL'):
             start_reminder_scheduler()
         
-        logging.info("Baby log app started successfully")
+        logging.info("Baby log app started successfully with database connection pooling")
         
     except Exception as e:
         logging.error(f"Startup error: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    try:
+        db_pool.close_all()
+        logging.info("Database connection pool closed successfully")
+    except Exception as e:
+        logging.error(f"Shutdown error: {e}")
 
 WELCOME_MESSAGE = (
     "Selamat datang di Babylog! 👋 Saya siap membantu Anda mengelola catatan dan perkembangan si kecil.\n\n"
