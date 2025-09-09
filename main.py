@@ -3137,25 +3137,7 @@ Apakah sudah benar? (ya/tidak)"""
         logging.exception(f"Error in WhatsApp webhook for user {user}: {exc}")
         resp = MessagingResponse()
         resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
-        return Response(str(resp), media_type="application/xml") * user_kcal["sufor"]
-                        session["state"] = "MILK_NOTE"
-                        reply = (
-                            f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
-                            "Catatan tambahan? (atau ketik 'skip')"
-                        )
-                else:
-                    reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                session_manager.update_session(user, state=session["state"], data=session["data"])
-                resp.message(reply)
-                return Response(str(resp), media_type="application/xml")
-            
-            elif session["state"] == "SET_KALORI_SUFOR_LOG":
-                val = msg.strip()
-                try:
-                    kcal = 0.7 if val == "" else float(val.replace(",", "."))
-                    set_user_calorie_setting(user, "sufor", kcal)
-                    session["data"]["sufor_kcal"] = kcal
-                    session["data"]["sufor_calorie"] = session["data"]["volume_ml"]
+        return Response(str(resp), media_type="application/xml")
 
 @app.on_event("startup")
 async def startup_event():
