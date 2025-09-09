@@ -2176,14 +2176,18 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
             
-        elif session["state"] == "SET_KALORI_SUFOR":
+        elif session["state"] == "SET_KALORI_SUFOR_LOG":
             val = msg.strip()
             try:
                 kcal = 0.7 if val == "" else float(val.replace(",", "."))
                 set_user_calorie_setting(user, "sufor", kcal)
-                reply = f"Nilai kalori susu formula di-set ke {kcal} kkal/ml."
-                session["state"] = None
-                session["data"] = {}
+                session["data"]["sufor_kcal"] = kcal
+                session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * kcal
+                session["state"] = "MILK_NOTE"
+                reply = (
+                    f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
+                    "Catatan tambahan? (atau ketik 'skip')"
+                )
             except Exception:
                 reply = "Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
             session_manager.update_session(user, state=session["state"], data=session["data"])
@@ -3030,14 +3034,14 @@ Apakah sudah benar? (ya/tidak)"""
                         reply = "Masukkan nilai kalori per ml susu formula (default 0.7), atau tekan enter untuk default:"
                     else:
                         session["data"]["sufor_kcal"] = user_kcal["sufor"]
-                        session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * kcal
-                    session["state"] = "MILK_NOTE"
-                    reply = (
-                        f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
-                        "Catatan tambahan? (atau ketik 'skip')"
-                    )
-                except Exception:
-                    reply = "Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
+                        session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
+                        session["state"] = "MILK_NOTE"
+                        reply = (
+                            f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
+                            "Catatan tambahan? (atau ketik 'skip')"
+                        )
+                else:
+                    reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
                 session_manager.update_session(user, state=session["state"], data=session["data"])
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
