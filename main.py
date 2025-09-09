@@ -37,6 +37,15 @@ from sleep_tracking import (
 from session_manager import SessionManager
 from timezone_handler import TimezoneHandler
 from database_pool import DatabasePool
+from error_handler import (
+    ErrorHandler, 
+    WebhookErrorHandler, 
+    ValidationError, 
+    DatabaseError, 
+    ExternalAPIError,
+    SessionError,
+    BabyLogError
+)
 
 # Initialize the singleton pool
 db_pool = DatabasePool()
@@ -746,6 +755,7 @@ def format_sleep_display(user, show_history=False):
         return "\n".join(lines)
 
 # Your existing database functions (adapted for both SQLite and PostgreSQL)
+@ErrorHandler.handle_database_error
 def get_user_calorie_setting(user):
     """Get user calorie setting using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -773,6 +783,8 @@ def get_user_calorie_setting(user):
                 c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (?)', (user,))
             return {"asi": 0.67, "sufor": 0.7}
 
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
 def set_user_calorie_setting(user, milk_type, value):
     """Set user calorie setting using connection pool with validation"""
     # Validate milk_type
@@ -804,6 +816,7 @@ def set_user_calorie_setting(user, milk_type, value):
             else:
                 c.execute(f'UPDATE {table_name} SET sufor_kcal=? WHERE {user_col}=?', (value, user))
 
+@ErrorHandler.handle_database_error
 def get_child(user):
     """Get child data using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -818,25 +831,27 @@ def get_child(user):
             c.execute(f'SELECT name, gender, dob, height_cm, weight_kg FROM {table_name} WHERE {user_col}=? ORDER BY created_at DESC LIMIT 1', (user,))
         return c.fetchone()
 
+@ErrorHandler.handle_database_error  # This catches any database-related errors
+@ErrorHandler.handle_validation_error  # This catches validation errors
 def save_child(user, data):
     """Save child data using connection pool with validation"""
-    # Validate input data first
+    # Validate input data first - CHANGE ValueError to ValidationError
     is_valid, error_msg = InputValidator.validate_date(data['dob'])
     if not is_valid:
-        raise ValueError(f"Invalid date: {error_msg}")
+        raise ValidationError(f"Invalid date: {error_msg}")  # CHANGED: ValidationError instead of ValueError
     
     is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
     if not is_valid:
-        raise ValueError(f"Invalid weight: {error_msg}")
+        raise ValidationError(f"Invalid weight: {error_msg}")  # CHANGED: ValidationError instead of ValueError
     
     is_valid, error_msg = InputValidator.validate_height_cm(str(data['height_cm']))
     if not is_valid:
-        raise ValueError(f"Invalid height: {error_msg}")
+        raise ValidationError(f"Invalid height: {error_msg}")  # CHANGED: ValidationError instead of ValueError
     
     # Sanitize text inputs
     data['name'] = InputValidator.sanitize_text_input(data['name'], 100)
     
-    # Database operations
+    # Database operations - ANY exception here will be caught by @handle_database_error
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('child')
@@ -855,16 +870,18 @@ def save_child(user, data):
             ''', (user, data['name'], data['gender'], data['dob'], data['height_cm'], data['weight_kg']))
             
 # Continue with your existing functions, but adapt database queries...
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error  
 def save_timbang(user, data):
     """Save timbang data using connection pool with validation"""
     # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
-        raise ValueError(f"Invalid date: {error_msg}")
+        raise ValidationError(f"Invalid date: {error_msg}")  # CHANGED: ValidationError
     
     is_valid, error_msg = InputValidator.validate_weight_kg(str(data['weight_kg']))
     if not is_valid:
-        raise ValueError(f"Invalid weight: {error_msg}")
+        raise ValidationError(f"Invalid weight: {error_msg}")  # CHANGED: ValidationError
     
     # Validate height
     try:
@@ -899,6 +916,7 @@ def save_timbang(user, data):
                 VALUES (?, ?, ?, ?, ?)
             ''', (user, data['date'], data['height_cm'], data['weight_kg'], data['head_circum_cm']))
 
+@ErrorHandler.handle_database_error
 def get_timbang_history(user, limit=None):
     """Get timbang history using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -931,6 +949,8 @@ def get_timbang_history(user, limit=None):
         return c.fetchall()
         
 # Reminder functions (adapted from your original script)
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
 def save_reminder(user, data):
     """Save reminder using connection pool with validation"""
     # Validate input data
@@ -977,6 +997,7 @@ def save_reminder(user, data):
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (user, data['reminder_name'], data['interval_hours'], data['start_time'], data['end_time'], start_datetime))
 
+@ErrorHandler.handle_database_error
 def get_user_reminders(user, active_only=True):
     """Get user reminders using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -1153,12 +1174,13 @@ def start_reminder_scheduler():
     logging.info("Reminder scheduler started")
 
 # Continue with all your existing functions...
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
 def save_mpasi(user, data):
     """Save MPASI data using connection pool with validation"""
-    # Validate input data
     is_valid, error_msg = InputValidator.validate_date(data['date'])
     if not is_valid:
-        raise ValueError(f"Invalid date: {error_msg}")
+        raise ValidationError(f"Invalid date: {error_msg}")
     
     is_valid, error_msg = InputValidator.validate_time(data['time'])
     if not is_valid:
@@ -1185,6 +1207,7 @@ def save_mpasi(user, data):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (user, data['date'], data['time'], data['volume_ml'], data['food_detail'], data['food_grams'], data.get('est_calories')))
 
+@ErrorHandler.handle_database_error
 def get_mpasi_summary(user, period_start=None, period_end=None):
     """Get MPASI summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -1238,6 +1261,8 @@ def update_mpasi_with_calories(user, data, gpt_summary, est_calories):
                 (gpt_summary, est_calories, user, data['date'], data['time'])
             )
             
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error            
 def save_poop(user, data):
     """Save poop data using connection pool with validation"""
     # Validate input data
@@ -1312,6 +1337,8 @@ def get_poop_log(user, period_start=None, period_end=None):
             c.execute(sqlite_query, tuple(params))
         return c.fetchall()
 
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
 def save_milk_intake(user, data):
     """Save milk intake using connection pool with validation"""
     # Validate input data
@@ -1350,6 +1377,7 @@ def save_milk_intake(user, data):
             ''', (user, data['date'], data['time'], data['volume_ml'], data['milk_type'], 
                   data.get('asi_method'), data.get('sufor_calorie'), data.get('note', "")))
 
+@ErrorHandler.handle_database_error
 def get_milk_intake_summary(user, period_start=None, period_end=None):
     """Get milk intake summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -1451,6 +1479,8 @@ def format_milk_summary(rows, summary_date):
 
     return "\n".join(lines)
     
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
 def save_pumping(user, data):
     """Save pumping data using connection pool with validation"""
     # Validate input data
@@ -1500,6 +1530,7 @@ def save_pumping(user, data):
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (user, data['date'], data['time'], data['left_ml'], data['right_ml'], data['milk_bags']))
 
+@ErrorHandler.handle_database_error
 def get_pumping_summary(user, period_start=None, period_end=None):
     """Get pumping summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -1529,6 +1560,7 @@ def get_pumping_summary(user, period_start=None, period_end=None):
         
         return c.fetchall()
 
+@ErrorHandler.handle_database_error
 def get_daily_summary(user, summary_date):
     """Get daily summary using connection pool"""
     database_url = os.environ.get('DATABASE_URL')
@@ -1640,13 +1672,15 @@ def extract_total_calories(gpt_summary):
 
 def send_calorie_summary_and_update(user, data):
     try:
-        summary = estimate_calories_openai(data['food_grams'])
+        summary = estimate_calories_openai(data['food_grams'])  # External API call
         total = extract_total_calories(summary)
         update_mpasi_with_calories(user, data, summary, total)
         send_twilio_message(user, f"Hasil estimasi kalori MPASI:\n{summary}")
     except Exception as e:
-        logging.error(f"Error in send_calorie_summary_and_update: {e}")
-        send_twilio_message(user, "Maaf, terjadi kesalahan saat menghitung kalori MPASI.")
+        # Manual error handling for external APIs
+        error_id = ErrorHandler.log_error(e, user_id=user, context={'function': 'calorie_estimation'})
+        user_message = ErrorHandler.get_user_message('api', '')
+        send_twilio_message(user, f"{user_message} Kode error: {error_id}")
 
 def get_mpasi_milk_data(user_phone):
     from datetime import date, timedelta
@@ -1845,9 +1879,9 @@ HELP_MESSAGE = (
     "• `set kalori asi` / `set kalori sufor`\n"
     "• `lihat kalori` / `daftar asupan` / `persentase asupan`\n\n"
     "*Pengingat Susu:*\n"
-    "• `atur pengingat susu` / `lihat pengingat`\n"
+    "• `set reminder susu` / `show reminders`\n"
     "• *Saat ada pengingat, Anda bisa:*\n"
-    "  • `done [volume]ml` (Selesai dan catat volume)\n"
+    "  • `done [volume]` (Selesai dan catat volume)\n"
     "  • `snooze [menit]` (Tunda pengingat)\n"
     "  • `skip reminder` (Lewati pengingat)\n\n"
     "*Pelacakan Tidur:*\n"
@@ -1857,9 +1891,11 @@ HELP_MESSAGE = (
     "• `lihat tidur` - Tidur hari ini\n"
     "• `riwayat tidur` - Riwayat beberapa hari\n\n"
     "*Laporan & Ringkasan:*\n"
-    "• `ringkasan hari ini`\n\n"
+    "• `summary today` / `ringkasan hari ini`\n\n"
     "*Perintah Umum:*\n"
-    "• `batal` (Batalkan sesi saat ini)\n\n"
+    "• `batal` / `cancel` (Batalkan sesi saat ini)\n"
+    "• `help` / `bantuan` (Tampilkan bantuan ini)\n"
+    "• `panduan` / `guide` (Daftar lengkap perintah)\n\n"
     "Butuh daftar lengkap semua perintah? Ketik `panduan`."
 )
 
@@ -1886,46 +1922,50 @@ PANDUAN_MESSAGE = (
     "• `daftar asupan` - Daftar lengkap asupan\n"
     "• `persentase asupan` - Persentase nutrisi asupan\n\n"
     "*IV. Kesehatan & Aktivitas:*\n"
-    "• `catat bab` - Catat riwayat BAB\n"
-    "• `lihat riwayat bab` - Lihat riwayat BAB\n\n"
+    "• `catat bab` / `log poop` - Catat riwayat BAB\n"
+    "• `lihat riwayat bab` / `show poop log` - Lihat riwayat BAB\n\n"
     "*V. Pelacakan Tidur:*\n"
     "• `catat tidur` - Mulai mencatat sesi tidur bayi\n"
     "• `selesai tidur [HH:MM]` - Selesaikan sesi tidur (cth: selesai tidur 07:30)\n"
     "• `batal tidur` - Batalkan sesi tidur yang belum selesai\n"
-    "• `lihat tidur` - Lihat catatan tidur hari ini\n"
-    "• `riwayat tidur` - Lihat riwayat tidur beberapa hari\n\n"
+    "• `lihat tidur` / `tidur hari ini` - Lihat catatan tidur hari ini\n"
+    "• `riwayat tidur` / `sleep history` - Lihat riwayat tidur beberapa hari\n\n"
     "*VI. Pengingat Susu:*\n"
-    "• `atur pengingat susu` - Atur pengingat pemberian susu\n"
-    "• `lihat pengingat` - Daftar pengingat susu aktif\n"
+    "• `set reminder susu` / `atur pengingat susu` - Atur pengingat pemberian susu\n"
+    "• `show reminders` / `lihat pengingat` - Daftar pengingat susu aktif\n"
     "• Respon cepat saat pengingat aktif:\n"
-    "  • `done [volume]ml` - Catat volume susu (cth: done 120ml)\n"
+    "  • `done [volume]` - Catat volume susu (cth: done 120)\n"
     "  • `snooze [menit]` - Tunda pengingat (cth: snooze 15)\n"
     "  • `skip reminder` - Lewati pengingat\n\n"
     "*VII. Laporan & Ringkasan:*\n"
-    "• `ringkasan hari ini` - Lihat rangkuman aktivitas hari ini\n\n"
+    "• `summary today` / `ringkasan hari ini` - Lihat rangkuman aktivitas hari ini\n"
+    "• `show summary` / `daily summary` - Tampilkan ringkasan harian\n\n"
     "*VIII. Perintah Umum:*\n"
-    "• `batal` - Batalkan sesi/aksi berjalan\n"
-    "• `bantuan` - Tampilkan bantuan singkat\n"
-    "• `panduan` - Tampilkan panduan lengkap ini\n\n"
+    "• `start` / `mulai` / `hi` / `halo` / `assalamualaikum` - Mulai percakapan\n"
+    "• `batal` / `cancel` - Batalkan sesi/aksi berjalan\n"
+    "• `help` / `bantuan` - Tampilkan bantuan singkat\n"
+    "• `panduan` / `guide` / `commands` / `perintah` - Tampilkan panduan lengkap ini\n\n"
     "*Tips Penggunaan:*\n"
     "📱 Gunakan format waktu 24 jam (HH:MM)\n"
     "📊 User gratis dibatasi beberapa fitur, upgrade ke premium untuk akses penuh\n"
-    "💡 Ketik `batal` kapan saja untuk membatalkan proses yang sedang berjalan"
+    "💡 Ketik `batal` kapan saja untuk membatalkan proses yang sedang berjalan\n"
+    "⏰ Format pengingat: 'done [angka]' tanpa 'ml' (contoh: 'done 120')\n"
+    "📅 Untuk tanggal hari ini, bisa ketik 'today' sebagai shortcut"
 )
 
 # Your existing webhook handler (unchanged except for cost control integration)
 @app.post("/webhook")
+@WebhookErrorHandler.handle_webhook_error  # ADD this decorator - it handles ALL errors!
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    user = None
-    try:
-        form = await request.form()
-        user = form.get("From")
-        msg = form.get("Body", "").strip()
-        resp = MessagingResponse()
-        session = session_manager.get_session(user)
-        reply = ""
+    form = await request.form()
+    user = form.get("From")
+    msg = form.get("Body", "").strip()
+    resp = MessagingResponse()
+    session = session_manager.get_session(user)
+    reply = ""
 
-        # Universal Commands
+    try:
+        # Universal Commands (no changes needed)
         if msg.lower() in ["batal", "cancel"]:
             session["state"] = None
             session["data"] = {}
@@ -1948,8 +1988,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp.message(PANDUAN_MESSAGE)
             return Response(str(resp), media_type="application/xml")
 
-        # Reminder Commands
-        elif msg.lower() in ["set reminder susu", "atur pengingat susu"]:
+        # ================== REMINDER COMMANDS ==================
+        if msg.lower() in ["set reminder susu", "atur pengingat susu"]:
             limits = get_tier_limits(user)  
             if os.environ.get('DATABASE_URL'):
                 user_info = get_user_tier(user)
@@ -1966,7 +2006,6 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
-
 
         elif session["state"] == "REMINDER_NAME":
             session["data"]["reminder_name"] = msg
@@ -2003,7 +2042,6 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # Fix 1: REMINDER_END section (around line 2211)
         elif session["state"] == "REMINDER_END":
             is_valid, error_msg = InputValidator.validate_time(msg)
             if not is_valid:
@@ -2023,7 +2061,6 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-# Fix 2: REMINDER_CONFIRM section 
         elif session["state"] == "REMINDER_CONFIRM":
             if msg.lower() == "ya":
                 try:
@@ -2110,19 +2147,14 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # [Continue with ALL your existing webhook logic from the original script]
-        # I'm showing the pattern - you would include all your existing flows here
-        # Calorie setting commands, data anak, timbang, mpasi, poop, pumping, milk intake, etc.
-        
-        # For brevity, I'll include a few key ones and the default response:
-        
-    # Calorie setting commands
+        # ================== CALORIE SETTINGS ==================
         if msg.lower().startswith("set kalori asi"):
             session["state"] = "SET_KALORI_ASI"
             reply = "Masukkan nilai kalori per ml ASI (default 0.67), atau tekan enter untuk default:"
             session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
+            
         elif session["state"] == "SET_KALORI_ASI":
             val = msg.strip()
             try:
@@ -2143,6 +2175,7 @@ Apakah sudah benar? (ya/tidak)"""
             session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
+            
         elif session["state"] == "SET_KALORI_SUFOR":
             val = msg.strip()
             try:
@@ -2157,7 +2190,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # --- Daily summary command ---
+        # ================== DAILY SUMMARY ==================
         summary_commands = [
             "summary today",
             "ringkasan hari ini",
@@ -2178,8 +2211,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-
-        # ---- Flow 1: Data Anak ----
+        # ================== CHILD DATA FLOW ==================
         if msg.lower() == "tambah anak":
             session["state"] = "ADDCHILD_NAME"
             session["data"] = {}
@@ -2248,18 +2280,18 @@ Apakah sudah benar? (ya/tidak)"""
                     reply = f"❌ {error_msg}"
                 else:
                     session["data"]["weight_kg"] = weight_kg
-                # Show summary before save
-                summary = (
-                    f"Data anak:\n"
-                    f"- Nama: {session['data']['name']}\n"
-                    f"- Jenis kelamin: {session['data']['gender']}\n"
-                    f"- Tgl lahir: {session['data']['dob']}\n"
-                    f"- Tinggi: {session['data']['height_cm']} cm\n"
-                    f"- Berat: {session['data']['weight_kg']} kg\n"
-                    f"Apakah data sudah benar? (ya/ulang/batal)"
-                )
-                session["state"] = "ADDCHILD_CONFIRM"
-                reply = summary
+                    # Show summary before save
+                    summary = (
+                        f"Data anak:\n"
+                        f"- Nama: {session['data']['name']}\n"
+                        f"- Jenis kelamin: {session['data']['gender']}\n"
+                        f"- Tgl lahir: {session['data']['dob']}\n"
+                        f"- Tinggi: {session['data']['height_cm']} cm\n"
+                        f"- Berat: {session['data']['weight_kg']} kg\n"
+                        f"Apakah data sudah benar? (ya/ulang/batal)"
+                    )
+                    session["state"] = "ADDCHILD_CONFIRM"
+                    reply = summary
             except ValueError:
                 reply = "❌ Masukkan angka untuk berat badan, contoh: 8.4 atau 8500."
             session_manager.update_session(user, state=session["state"], data=session["data"])
@@ -2268,20 +2300,11 @@ Apakah sudah benar? (ya/tidak)"""
 
         elif session["state"] == "ADDCHILD_CONFIRM":
             if msg.lower() == "ya":
-                try:
-                    save_child(user, session["data"])  # This can throw ValueError
-                    reply = "Data anak tersimpan! Untuk melihat data anak, ketik: tampilkan anak"
-                    session["state"] = None
-                    session["data"] = {}
-                except ValueError as e:
-                    reply = f"❌ {str(e)}"
-                    # Don't reset session, let user fix the error
-                    session_manager.update_session(user, state=session["state"], data=session["data"])
-                    resp.message(reply)
-                    return Response(str(resp), media_type="application/xml")
-                except Exception as e:
-                    logging.error(f"Error saving child: {e}")
-                    reply = "❌ Terjadi kesalahan saat menyimpan data anak."
+                # NO MORE TRY/CATCH! The decorator handles everything
+                save_child(user, session["data"])  # If this fails, decorator sends appropriate error message
+                reply = "✅ Data anak tersimpan! Untuk melihat data anak, ketik: tampilkan anak"
+                session["state"] = None
+                session["data"] = {}
             elif msg.lower() == "ulang":
                 session["state"] = "ADDCHILD_NAME"
                 reply = "Siapa nama anak Anda? (Ulangi input)"
@@ -2305,7 +2328,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # ---- Flow 2: Catat Timbang ----
+        # ================== WEIGHT TRACKING ==================
         elif msg.lower() == "catat timbang":
             session["state"] = "TIMBANG_HEIGHT"
             session["data"] = {"date": datetime.now().strftime("%Y-%m-%d")}
@@ -2345,12 +2368,11 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-# Fix 5: TIMBANG_HEAD section (the one causing the syntax error at line 2532)
         elif session["state"] == "TIMBANG_HEAD":
             try:
                 session["data"]["head_circum_cm"] = float(msg)
                 save_timbang(user, session["data"])  # This can throw ValueError
-                reply = "Data timbang tersimpan! Untuk melihat riwayat, ketik: lihat tumbuh kembang"
+                reply = "✅ Data timbang tersimpan! Ketik 'lihat tumbuh kembang' untuk melihat riwayat."
                 session["state"] = None
                 session["data"] = {}
             except ValueError as e:
@@ -2361,7 +2383,6 @@ Apakah sudah benar? (ya/tidak)"""
             except Exception as e:
                 logging.error(f"Error saving timbang: {e}")
                 reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
-            
             session_manager.update_session(user, state=session["state"], data=session["data"])
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
@@ -2379,7 +2400,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # ---- Flow 3: Catat MPASI ----
+        # ================== MPASI FLOW ==================
         elif msg.lower() == "catat mpasi":
             session["state"] = "MPASI_DATE"
             session["data"] = {}
@@ -2497,7 +2518,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        # ---- Flow 4: Pengingat Kalori ----
+        # ================== CALORIE TRACKING ==================
         elif msg.lower() == "lihat kalori":
             # Calculate total calories from both MPASI and susu for today
             today = datetime.now().strftime("%Y-%m-%d")
@@ -2554,7 +2575,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
-        # ---- Flow 5: Catat Pup ----
+        # ================== POOP TRACKING ==================
         elif msg.lower() in ["log poop", "catat bab"]:
             session["state"] = "POOP_DATE"
             session["data"] = {}
@@ -2656,10 +2677,7 @@ Apakah sudah benar? (ya/tidak)"""
                 resp.message("Maaf, terjadi kesalahan saat mengambil data log pup.")
                 return Response(str(resp), media_type="application/xml")
 
-        # === SLEEP TRACKING HANDLERS ===
-        
-        # === REVISED SLEEP TRACKING HANDLERS ===
-
+        # ================== SLEEP TRACKING ==================
         # Handler 1: "catat tidur" - Start sleep tracking
         elif msg.lower() == "catat tidur":
             now = datetime.now()
@@ -2813,7 +2831,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
-        # ---- Flow 6: Catat Pumping ASI ----
+        # ================== PUMPING FLOW ==================
         elif msg.lower() == "catat pumping":
             session["state"] = "PUMP_DATE"
             session["data"] = {}
@@ -2898,8 +2916,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
 
-        
-    # --- Flow: Calculate Formula Milk Calories with User Setting ---
+        # ================== MILK CALORIE CALCULATION ==================
         elif msg.lower() == "hitung kalori susu":
             session["state"] = "CALC_MILK_VOL"
             session["data"] = {}
@@ -2940,7 +2957,7 @@ Apakah sudah benar? (ya/tidak)"""
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
         
-        # --- Milk Intake Logging: Use user setting for default calories ---
+        # ================== MILK INTAKE LOGGING ==================
         if msg.lower() == "catat susu" or session["state"] in [
             "MILK_DATE", "MILK_TIME", "MILK_VOL", "MILK_TYPE", "ASI_METHOD", "MILK_NOTE", "SET_KALORI_SUFOR_LOG"
         ]:
@@ -3013,25 +3030,7 @@ Apakah sudah benar? (ya/tidak)"""
                         reply = "Masukkan nilai kalori per ml susu formula (default 0.7), atau tekan enter untuk default:"
                     else:
                         session["data"]["sufor_kcal"] = user_kcal["sufor"]
-                        session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
-                        session["state"] = "MILK_NOTE"
-                        reply = (
-                            f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
-                            "Catatan tambahan? (atau ketik 'skip')"
-                        )
-                else:
-                    reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                session_manager.update_session(user, state=session["state"], data=session["data"])
-                resp.message(reply)
-                return Response(str(resp), media_type="application/xml")
-            
-            elif session["state"] == "SET_KALORI_SUFOR_LOG":
-                val = msg.strip()
-                try:
-                    kcal = 0.7 if val == "" else float(val.replace(",", "."))
-                    set_user_calorie_setting(user, "sufor", kcal)
-                    session["data"]["sufor_kcal"] = kcal
-                    session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * kcal
+                        session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * kcal
                     session["state"] = "MILK_NOTE"
                     reply = (
                         f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
@@ -3057,7 +3056,9 @@ Apakah sudah benar? (ya/tidak)"""
             
             elif session["state"] == "MILK_NOTE":
                 note_text = "" if msg.lower() == "skip" else InputValidator.sanitize_text_input(msg, 200)
-                session["data"]["note"] = note_text                # PATCH: Always ensure sufor_calorie is set for sufor entries
+                session["data"]["note"] = note_text
+                
+                # PATCH: Always ensure sufor_calorie is set for sufor entries
                 if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
                     user_kcal = get_user_calorie_setting(user)
                     session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
@@ -3089,7 +3090,7 @@ Apakah sudah benar? (ya/tidak)"""
                 resp.message(reply)
                 return Response(str(resp), media_type="application/xml")
 
-        # --- Milk Intake Summary ---
+        # ================== MILK INTAKE SUMMARY ==================
         if msg.lower().startswith("lihat ringkasan susu") or msg.lower().startswith("ringkasan susu"):
             mdate = re.search(r"\d{4}-\d{2}-\d{2}", msg)
             if "today" in msg.lower():
@@ -3113,12 +3114,14 @@ Apakah sudah benar? (ya/tidak)"""
                 resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
                 return Response(str(resp), media_type="application/xml")
 
-        # ---------- DEFAULT RESPONSE (not indented inside any previous block) ----------
+        # ================== DEFAULT RESPONSE ==================
+        # Provide default welcome message when no command matches
         if os.environ.get('DATABASE_URL'):
             user_info = get_user_tier(user)
             tier_text = f"\n💡 Status: Tier {user_info['tier'].title()}\n📊 Pengingat tersisa hari ini: {2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'}"
         else:
             tier_text = ""
+        
         reply = (
             f"Selamat datang di Babylog! 🍼{tier_text}\n\n"
             "Ketik 'help' untuk melihat semua perintah.\n\n"
@@ -3129,11 +3132,30 @@ Apakah sudah benar? (ya/tidak)"""
         session_manager.update_session(user, state=session["state"], data=session["data"])
         resp.message(reply)
         return Response(str(resp), media_type="application/xml")
+        
     except Exception as exc:
         logging.exception(f"Error in WhatsApp webhook for user {user}: {exc}")
         resp = MessagingResponse()
         resp.message("Maaf, terjadi kesalahan teknis. Silakan coba lagi nanti.")
-        return Response(str(resp), media_type="application/xml")
+        return Response(str(resp), media_type="application/xml") * user_kcal["sufor"]
+                        session["state"] = "MILK_NOTE"
+                        reply = (
+                            f"Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal. "
+                            "Catatan tambahan? (atau ketik 'skip')"
+                        )
+                else:
+                    reply = "Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
+                session_manager.update_session(user, state=session["state"], data=session["data"])
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            
+            elif session["state"] == "SET_KALORI_SUFOR_LOG":
+                val = msg.strip()
+                try:
+                    kcal = 0.7 if val == "" else float(val.replace(",", "."))
+                    set_user_calorie_setting(user, "sufor", kcal)
+                    session["data"]["sufor_kcal"] = kcal
+                    session["data"]["sufor_calorie"] = session["data"]["volume_ml"]
 
 @app.on_event("startup")
 async def startup_event():
