@@ -19,9 +19,9 @@ import logging
 class SleepHandler:
     """Handle all sleep tracking operations"""
     
-    def __init__(self, session_manager, app_logger):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.app_logger = app_logger
+        self.logger = logger  # Use simple logger instead of app_logger
     
     def handle_sleep_commands(self, user: str, message: str) -> Response:
         """Route sleep commands to appropriate handlers"""
