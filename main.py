@@ -1,34 +1,30 @@
-# main_refactored.py
+# main.py
 """
-Refactored main application file - much cleaner and modular
-Previous main.py was 2000+ lines, this is under 500 lines
+Fixed main application file for baby tracking chatbot
+Resolves import errors and circular dependencies
 """
 import os
+import sys
 from datetime import datetime
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import Response, StreamingResponse
 from twilio.twiml.messaging_response import MessagingResponse
 
-# Import our modular components
-from utils.logging_config import setup_logging, LoggingMiddleware, get_app_logger
-from session_manager import SessionManager
-from database.operations import init_database
-from tier_management import get_tier_limits, format_tier_status_message
-from error_handler import WebhookErrorHandler
-
-# Import handlers
-from handlers.child_handler import ChildHandler
-from handlers.feeding_handler import FeedingHandler
-from handlers.sleep_handler import SleepHandler
-from handlers.reminder_handler import ReminderHandler
-from handlers.summary_handler import SummaryHandler
-
-# Import utilities
-from constants import WELCOME_MESSAGE, HELP_MESSAGE, PANDUAN_MESSAGE
-from chart_generator import generate_chart_response, generate_pdf_response
-
-# Initialize logging
+# Initialize logging first
+from utils.logging_config import setup_logging, get_app_logger
 app_logger = setup_logging()
+
+# Initialize database pool
+from database_pool import DatabasePool
+db_pool = DatabasePool()
+
+# Core modules
+from session_manager import SessionManager
+from error_handler import WebhookErrorHandler
+from constants import WELCOME_MESSAGE, HELP_MESSAGE, PANDUAN_MESSAGE
+
+# Initialize session manager
+session_manager = SessionManager(timeout_minutes=30)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -37,28 +33,44 @@ app = FastAPI(
     description="Modular baby tracking chatbot with comprehensive logging"
 )
 
-# Initialize components
-session_manager = SessionManager(timeout_minutes=30)
-logging_middleware = LoggingMiddleware(app_logger)
-
-# Initialize handlers
-child_handler = ChildHandler(session_manager, app_logger)
-feeding_handler = FeedingHandler(session_manager, app_logger)
-sleep_handler = SleepHandler(session_manager, app_logger)
-reminder_handler = ReminderHandler(session_manager, app_logger)
-summary_handler = SummaryHandler(session_manager, app_logger)
-
-# Add logging middleware
+# Add request logging middleware
 @app.middleware("http")
-async def logging_middleware_func(request: Request, call_next):
-    return await logging_middleware.log_request(request, call_next)
+async def log_requests(request: Request, call_next):
+    start_time = datetime.now()
+    
+    try:
+        response = await call_next(request)
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        
+        # Log successful request
+        app_logger.performance.log_request(
+            user_id='system',
+            action=f"{request.method} {request.url.path}",
+            duration_ms=duration,
+            success=True
+        )
+        
+        return response
+        
+    except Exception as e:
+        duration = (datetime.now() - start_time).total_seconds() * 1000
+        error_id = app_logger.log_error(e, context={'path': request.url.path})
+        
+        app_logger.performance.log_request(
+            user_id='system',
+            action=f"{request.method} {request.url.path}",
+            duration_ms=duration,
+            success=False,
+            extra_data={'error_id': error_id}
+        )
+        
+        raise
 
 @app.get("/health")
 async def health_check():
     """Comprehensive health check"""
     try:
         # Test database connection
-        from database.operations import db_pool
         with db_pool.get_connection() as conn:
             pass
         
@@ -85,9 +97,6 @@ async def get_application_stats():
     """Get application statistics"""
     try:
         session_stats = session_manager.get_stats()
-        
-        # Get database pool stats
-        from database.operations import db_pool
         db_stats = db_pool.get_stats()
         
         return {
@@ -104,6 +113,7 @@ async def mpasi_milk_graph(user_phone: str):
     """Generate MPASI & milk intake chart"""
     try:
         app_logger.log_user_action(user_phone, 'chart_request')
+        from chart_generator import generate_chart_response
         return await generate_chart_response(user_phone)
     except Exception as e:
         error_id = app_logger.log_error(e, user_id=user_phone, context={'function': 'chart_generation'})
@@ -114,6 +124,7 @@ async def report_mpasi_milk(user_phone: str):
     """Generate PDF report"""
     try:
         app_logger.log_user_action(user_phone, 'pdf_report_request')
+        from chart_generator import generate_pdf_response
         return await generate_pdf_response(user_phone)
     except Exception as e:
         error_id = app_logger.log_error(e, user_id=user_phone, context={'function': 'pdf_generation'})
@@ -122,7 +133,7 @@ async def report_mpasi_milk(user_phone: str):
 @app.post("/webhook")
 @WebhookErrorHandler.handle_webhook_error
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Main webhook handler - now much cleaner!"""
+    """Main webhook handler"""
     form = await request.form()
     user = form.get("From")
     message = form.get("Body", "").strip()
@@ -155,6 +166,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         
         # Status command
         if message.lower() in ["status", "tier", "my status"]:
+            from tier_management import format_tier_status_message
             status_msg = format_tier_status_message(user)
             resp.message(status_msg)
             return Response(str(resp), media_type="application/xml")
@@ -178,49 +190,51 @@ async def route_message_to_handler(user: str, message: str, session: dict,
     # Child-related commands and states
     if (message.lower() in ["tambah anak", "tampilkan anak"] or 
         current_state and current_state.startswith("ADDCHILD")):
-        return child_handler.handle_child_commands(user, message)
+        return handle_child_commands(user, message)
     
     # Growth tracking
     if (message.lower() in ["catat timbang"] or 
         message.lower().startswith("lihat tumbuh kembang") or
         current_state and current_state.startswith("TIMBANG")):
-        return child_handler.handle_growth_tracking(user, message)
+        return handle_growth_tracking(user, message)
     
     # Feeding-related commands
     if (message.lower() in ["catat mpasi", "catat susu", "catat pumping", "hitung kalori susu"] or
         message.lower().startswith("lihat ringkasan") or
         current_state and current_state.startswith(("MPASI", "MILK", "PUMP", "CALC"))):
-        return feeding_handler.handle_feeding_commands(user, message)
+        return handle_feeding_commands(user, message)
     
     # Sleep tracking
     if (message.lower() in ["catat tidur", "lihat tidur", "riwayat tidur", "batal tidur"] or
         message.lower().startswith("selesai tidur") or
         current_state and current_state.startswith("SLEEP")):
-        return sleep_handler.handle_sleep_commands(user, message)
+        return handle_sleep_commands(user, message)
     
     # Reminder management
     if (message.lower().startswith(("set reminder", "atur pengingat", "show reminders", "lihat pengingat")) or
         message.lower().startswith(("done ", "snooze ", "skip reminder")) or
         current_state and current_state.startswith("REMINDER")):
-        return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+        return handle_reminder_commands(user, message, background_tasks)
     
     # Calorie settings
     if (message.lower().startswith("set kalori") or
         current_state and current_state.startswith("SET_KALORI")):
-        return feeding_handler.handle_calorie_settings(user, message)
+        return handle_calorie_settings(user, message)
     
     # Summary and reports
     if (message.lower().startswith(("summary", "ringkasan")) or
         message.lower() in ["show summary", "daily summary"]):
-        return summary_handler.handle_summary_commands(user, message)
+        return handle_summary_commands(user, message)
     
     # Health tracking (poop, etc.)
     if (message.lower() in ["log poop", "catat bab", "show poop log", "lihat riwayat bab"] or
         current_state and current_state.startswith("POOP")):
-        return feeding_handler.handle_health_tracking(user, message)
+        return handle_health_tracking(user, message)
     
     # Default response for unrecognized commands
     return handle_default_response(user, message)
+
+# Handler functions - moved from separate files to avoid circular imports
 
 def handle_cancel_command(user: str, resp: MessagingResponse) -> Response:
     """Handle cancel command"""
@@ -246,6 +260,7 @@ def handle_default_response(user: str, message: str) -> Response:
     )
     
     # Get user tier for personalized response
+    from tier_management import get_tier_limits
     limits = get_tier_limits(user)
     tier = limits.get('tier', 'free')
     
@@ -268,6 +283,61 @@ def handle_default_response(user: str, message: str) -> Response:
     resp.message(reply)
     return Response(str(resp), media_type="application/xml")
 
+def handle_child_commands(user: str, message: str) -> Response:
+    """Handle child-related commands"""
+    from handlers.child_handler import ChildHandler
+    handler = ChildHandler(session_manager, app_logger)
+    
+    if message.lower() == "tambah anak":
+        return handler.handle_add_child(user, message)
+    elif message.lower() == "tampilkan anak":
+        return handler.handle_show_child(user)
+    else:
+        # Handle session-based child commands
+        return handler.handle_add_child(user, message)
+
+def handle_growth_tracking(user: str, message: str) -> Response:
+    """Handle growth tracking commands"""
+    from handlers.child_handler import ChildHandler
+    handler = ChildHandler(session_manager, app_logger)
+    return handler.handle_growth_tracking(user, message)
+
+def handle_feeding_commands(user: str, message: str) -> Response:
+    """Handle feeding-related commands"""
+    from handlers.feeding_handler import FeedingHandler
+    handler = FeedingHandler(session_manager, app_logger)
+    return handler.handle_feeding_commands(user, message)
+
+def handle_sleep_commands(user: str, message: str) -> Response:
+    """Handle sleep tracking commands"""
+    from handlers.sleep_handler import SleepHandler
+    handler = SleepHandler(session_manager, app_logger)
+    return handler.handle_sleep_commands(user, message)
+
+def handle_reminder_commands(user: str, message: str, background_tasks: BackgroundTasks) -> Response:
+    """Handle reminder management commands"""
+    from handlers.reminder_handler import ReminderHandler
+    handler = ReminderHandler(session_manager, app_logger)
+    return handler.handle_reminder_commands(user, message, background_tasks)
+
+def handle_calorie_settings(user: str, message: str) -> Response:
+    """Handle calorie setting commands"""
+    from handlers.feeding_handler import FeedingHandler
+    handler = FeedingHandler(session_manager, app_logger)
+    return handler.handle_calorie_settings(user, message)
+
+def handle_summary_commands(user: str, message: str) -> Response:
+    """Handle summary and reporting commands"""
+    from handlers.summary_handler import SummaryHandler
+    handler = SummaryHandler(session_manager, app_logger)
+    return handler.handle_summary_commands(user, message)
+
+def handle_health_tracking(user: str, message: str) -> Response:
+    """Handle health tracking commands"""
+    from handlers.feeding_handler import FeedingHandler
+    handler = FeedingHandler(session_manager, app_logger)
+    return handler.handle_health_tracking(user, message)
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup"""
@@ -275,15 +345,18 @@ async def startup_event():
         app_logger.app_logger.info("Starting Baby Log application v2.0.0")
         
         # Initialize database
+        from database.operations import init_database
         init_database()
         app_logger.app_logger.info("Database initialized successfully")
         
-        # Start background services
+        # Start background services only in production
         if os.environ.get('DATABASE_URL'):
-            # Only start scheduler in production
-            from background_services import start_reminder_scheduler
-            start_reminder_scheduler()
-            app_logger.app_logger.info("Background services started")
+            try:
+                from background_services import start_reminder_scheduler
+                start_reminder_scheduler()
+                app_logger.app_logger.info("Background services started")
+            except ImportError as e:
+                app_logger.app_logger.warning(f"Background services not available: {e}")
         
         app_logger.app_logger.info("Baby Log application started successfully")
         
@@ -296,7 +369,6 @@ async def shutdown_event():
     """Cleanup on shutdown"""
     try:
         # Close database connections
-        from database.operations import db_pool
         db_pool.close_all()
         
         app_logger.app_logger.info("Baby Log application shutdown completed")
@@ -308,9 +380,7 @@ async def shutdown_event():
 @app.get("/admin/logs")
 async def get_recent_logs():
     """Get recent application logs (admin only)"""
-    # This would require authentication in production
     try:
-        # Return recent log entries - implementation depends on log storage
         return {
             "message": "Log endpoint - implement based on your log storage solution",
             "timestamp": datetime.now().isoformat()
@@ -337,4 +407,4 @@ async def get_user_sessions(user_id: str):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("main_refactored:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
