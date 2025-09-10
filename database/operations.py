@@ -1,7 +1,7 @@
 # database/operations.py
 """
 Centralized database operations module
-Fixed version with init_database function and proper imports
+Fixed version with all missing functions and proper error handling
 """
 import os
 import logging
@@ -335,131 +335,6 @@ def get_user_calorie_setting(user: str) -> Dict[str, float]:
 
 @ErrorHandler.handle_database_error
 @ErrorHandler.handle_validation_error
-def save_poop(user: str, data: Dict[str, Any]) -> None:
-    """Save poop data with validation"""
-    # Validate input data
-    is_valid, error_msg = InputValidator.validate_date(data['date'])
-    if not is_valid:
-        raise ValidationError(f"Invalid date: {error_msg}")
-    
-    is_valid, error_msg = InputValidator.validate_time(data['time'])
-    if not is_valid:
-        raise ValidationError(f"Invalid time: {error_msg}")
-    
-    # Validate Bristol scale
-    try:
-        bristol = int(data['bristol_scale'])
-        if bristol < 1 or bristol > 7:
-            raise ValidationError("Bristol scale must be between 1-7")
-    except (ValueError, TypeError):
-        raise ValidationError("Invalid Bristol scale value")
-    
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('poop_log')
-    
-    with db_pool.get_connection() as conn:
-        c = conn.cursor()
-        if database_url:
-            c.execute(f'''
-                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
-                VALUES (%s, %s, %s, %s)
-            ''', (user, data['date'], data['time'], data['bristol_scale']))
-        else:
-            c.execute(f'''
-                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
-                VALUES (?, ?, ?, ?)
-            ''', (user, data['date'], data['time'], data['bristol_scale']))
-
-@ErrorHandler.handle_database_error
-def get_poop_log(user: str, period_start: Optional[str] = None, period_end: Optional[str] = None) -> List[Tuple]:
-    """Get poop log with optional date range"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('poop_log')
-    
-    from tier_management import get_tier_limits
-    limits = get_tier_limits(user)
-
-    # If no period is specified and free, restrict to history_days
-    if not period_start and not period_end and limits["history_days"]:
-        period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
-        period_end = datetime.now().strftime('%Y-%m-%d')
-
-    query = f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=%s"
-    params = [user]
-
-    # Add date range filter if specified
-    if period_start and period_end:
-        query += " AND date BETWEEN %s AND %s"
-        params += [period_start, period_end]
-
-    query += " ORDER BY date DESC, time DESC"
-
-    with db_pool.get_connection() as conn:
-        c = conn.cursor()
-        if database_url:
-            c.execute(query, tuple(params))
-        else:
-            sqlite_query = query.replace('%s', '?')
-            c.execute(sqlite_query, tuple(params))
-        return c.fetchall()
-
-# Reminder management functions
-@ErrorHandler.handle_database_error
-def save_reminder(user: str, data: Dict[str, Any]) -> None:
-    """Save reminder data"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
-    
-    # Calculate next due time
-    from datetime import datetime, timedelta
-    start_hour, start_min = map(int, data['start_time'].split(':'))
-    next_due = datetime.now().replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
-    if next_due <= datetime.now():
-        next_due += timedelta(days=1)
-    
-    with db_pool.get_connection() as conn:
-        c = conn.cursor()
-        if database_url:
-            c.execute(f'''
-                INSERT INTO {table_name} ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (user, data['reminder_name'], data['interval_hours'], 
-                  data['start_time'], data['end_time'], next_due))
-        else:
-            c.execute(f'''
-                INSERT INTO {table_name} ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (user, data['reminder_name'], data['interval_hours'], 
-                  data['start_time'], data['end_time'], next_due))
-
-@ErrorHandler.handle_database_error
-def get_user_reminders(user: str) -> List[Tuple]:
-    """Get user's active reminders"""
-    database_url = os.environ.get('DATABASE_URL')
-    user_col = DatabaseSecurity.get_user_column(database_url)
-    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
-    
-    with db_pool.get_connection() as conn:
-        c = conn.cursor()
-        if database_url:
-            c.execute(f'''
-                SELECT reminder_name, interval_hours, start_time, end_time, is_active, next_due
-                FROM {table_name} WHERE {user_col}=%s AND is_active=TRUE
-                ORDER BY created_at DESC
-            ''', (user,))
-        else:
-            c.execute(f'''
-                SELECT reminder_name, interval_hours, start_time, end_time, is_active, next_due
-                FROM {table_name} WHERE {user_col}=? AND is_active=1
-                ORDER BY created_at DESC
-            ''', (user,))
-        return c.fetchall()
-
-@ErrorHandler.handle_database_error
-@ErrorHandler.handle_validation_error        
 def set_user_calorie_setting(user: str, milk_type: str, value: float) -> None:
     """Set user calorie setting with validation"""
     # Validate milk_type
@@ -480,6 +355,25 @@ def set_user_calorie_setting(user: str, milk_type: str, value: float) -> None:
     
     with db_pool.get_connection() as conn:
         c = conn.cursor()
+        
+        # First ensure user exists in calorie_setting table
+        if database_url:
+            c.execute(f'SELECT id FROM {table_name} WHERE {user_col}=%s', (user,))
+        else:
+            c.execute(f'SELECT id FROM {table_name} WHERE {user_col}=?', (user,))
+        
+        exists = c.fetchone()
+        
+        if not exists:
+            # Insert with default values
+            if database_url:
+                c.execute(f'INSERT INTO {table_name} ({user_col}, asi_kcal, sufor_kcal) VALUES (%s, %s, %s)', 
+                         (user, 0.67, 0.7))
+            else:
+                c.execute(f'INSERT INTO {table_name} ({user_col}, asi_kcal, sufor_kcal) VALUES (?, ?, ?)', 
+                         (user, 0.67, 0.7))
+        
+        # Now update the specific value
         if milk_type == "asi":
             if database_url:
                 c.execute(f'UPDATE {table_name} SET asi_kcal=%s WHERE {user_col}=%s', (value, user))
@@ -881,6 +775,7 @@ def save_poop(user: str, data: Dict[str, Any]) -> None:
                 VALUES (?, ?, ?, ?)
             ''', (user, data['date'], data['time'], data['bristol_scale']))
 
+@ErrorHandler.handle_database_error
 def get_poop_log(user: str, period_start: Optional[str] = None, period_end: Optional[str] = None) -> List[Tuple]:
     """Get poop log with optional date range"""
     database_url = os.environ.get('DATABASE_URL')
@@ -913,3 +808,125 @@ def get_poop_log(user: str, period_start: Optional[str] = None, period_end: Opti
             sqlite_query = query.replace('%s', '?')
             c.execute(sqlite_query, tuple(params))
         return c.fetchall()
+
+# Reminder management functions
+@ErrorHandler.handle_database_error
+def save_reminder(user: str, data: Dict[str, Any]) -> None:
+    """Save reminder data"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    # Calculate next due time
+    from datetime import datetime, timedelta
+    start_hour, start_min = map(int, data['start_time'].split(':'))
+    next_due = datetime.now().replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
+    if next_due <= datetime.now():
+        next_due += timedelta(days=1)
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (user, data['reminder_name'], data['interval_hours'], 
+                  data['start_time'], data['end_time'], next_due))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, reminder_name, interval_hours, start_time, end_time, next_due)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user, data['reminder_name'], data['interval_hours'], 
+                  data['start_time'], data['end_time'], next_due))
+
+@ErrorHandler.handle_database_error
+def get_user_reminders(user: str) -> List[Tuple]:
+    """Get user's active reminders"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                SELECT reminder_name, interval_hours, start_time, end_time, is_active, next_due
+                FROM {table_name} WHERE {user_col}=%s AND is_active=TRUE
+                ORDER BY created_at DESC
+            ''', (user,))
+        else:
+            c.execute(f'''
+                SELECT reminder_name, interval_hours, start_time, end_time, is_active, next_due
+                FROM {table_name} WHERE {user_col}=? AND is_active=1
+                ORDER BY created_at DESC
+            ''', (user,))
+        return c.fetchall()
+
+@ErrorHandler.handle_database_error
+def update_reminder_next_due(reminder_id: int, next_due: datetime) -> bool:
+    """Update reminder next due time"""
+    database_url = os.environ.get('DATABASE_URL')
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET next_due=%s, last_sent=%s 
+                WHERE id=%s
+            ''', (next_due, datetime.now(), reminder_id))
+        else:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET next_due=?, last_sent=? 
+                WHERE id=?
+            ''', (next_due, datetime.now(), reminder_id))
+        
+        return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def stop_reminder(user: str, reminder_name: str) -> bool:
+    """Stop/deactivate a specific reminder"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET is_active=FALSE 
+                WHERE {user_col}=%s AND reminder_name=%s
+            ''', (user, reminder_name))
+        else:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET is_active=0 
+                WHERE {user_col}=? AND reminder_name=?
+            ''', (user, reminder_name))
+        
+        return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def delete_reminder(user: str, reminder_name: str) -> bool:
+    """Delete a specific reminder permanently"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('milk_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                DELETE FROM {table_name} 
+                WHERE {user_col}=%s AND reminder_name=%s
+            ''', (user, reminder_name))
+        else:
+            c.execute(f'''
+                DELETE FROM {table_name} 
+                WHERE {user_col}=? AND reminder_name=?
+            ''', (user, reminder_name))
+        
+        return c.rowcount > 0
