@@ -1,6 +1,6 @@
 # handlers/feeding_handler.py
 """
-Complete feeding operations handler
+Complete feeding operations handler - FIXED VERSION
 Handles MPASI, milk intake, pumping, calorie calculations, and health tracking
 """
 from datetime import datetime
@@ -49,14 +49,15 @@ class FeedingHandler:
               session["state"] and session["state"].startswith("CALC")):
             return self.handle_calorie_calculation(user, message)
         
+        # Calorie settings
+        elif (message.lower().startswith("set kalori") or
+              message.lower() == "lihat kalori" or
+              session["state"] and session["state"].startswith("SET_KALORI")):
+            return self.handle_calorie_settings(user, message)
+        
         # Summary commands
         elif message.lower().startswith("lihat ringkasan"):
             return self.handle_summary_requests(user, message)
-        
-        # Health tracking (poop)
-        elif (message.lower() in ["log poop", "catat bab", "show poop log", "lihat riwayat bab"] or
-              session["state"] and session["state"].startswith("POOP")):
-            return self.handle_health_tracking(user, message)
         
         else:
             return self._handle_unknown_feeding_command(user, message)
@@ -119,7 +120,6 @@ class FeedingHandler:
             elif session["state"] == "MPASI_GRAMS":
                 if message.lower() != "skip":
                     session["data"]["food_grams"] = message
-                    # Note: Calorie estimation would be handled by background task
                     session["data"]["est_calories"] = None  # Will be updated by GPT
                 else:
                     session["data"]["food_grams"] = ""
@@ -148,11 +148,6 @@ class FeedingHandler:
                         f"• Makanan: {session['data']['food_detail']}\n\n"
                         f"Ketik 'lihat ringkasan mpasi' untuk melihat ringkasan lengkap."
                     )
-                    
-                    # Trigger calorie calculation if food_grams provided
-                    if session["data"].get("food_grams"):
-                        reply += "\n\n🔄 Sedang menghitung kalori... Hasil akan dikirim sebentar lagi."
-                        # Background task would handle GPT calorie calculation
                     
                     session["state"] = None
                     session["data"] = {}
@@ -331,6 +326,172 @@ class FeedingHandler:
             resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
             return Response(str(resp), media_type="application/xml")
     
+    def handle_calorie_settings(self, user: str, message: str) -> Response:
+        """Handle calorie setting commands"""
+        session = self.session_manager.get_session(user)
+        resp = MessagingResponse()
+        
+        try:
+            if message.lower().startswith("set kalori asi"):
+                session["state"] = "SET_KALORI_ASI"
+                session["data"] = {}
+                reply = "🤱 Masukkan nilai kalori per ml ASI (default 0.67 kkal/ml):\n\nContoh: 0.67 atau tekan enter untuk default"
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                
+            elif session["state"] == "SET_KALORI_ASI":
+                val = message.strip()
+                try:
+                    kcal = 0.67 if val == "" else float(val.replace(",", "."))
+                    if kcal <= 0 or kcal > 5:
+                        reply = "❌ Nilai kalori harus antara 0.1 - 5.0 kkal/ml"
+                    else:
+                        set_user_calorie_setting(user, "asi", kcal)
+                        
+                        # Log setting change
+                        self.app_logger.log_user_action(
+                            user_id=user,
+                            action='calorie_setting_updated',
+                            success=True,
+                            details={'milk_type': 'asi', 'new_value': kcal}
+                        )
+                        
+                        reply = f"✅ Nilai kalori ASI berhasil diset ke {kcal} kkal/ml."
+                        session["state"] = None
+                        session["data"] = {}
+                except ValueError:
+                    reply = "❌ Format tidak valid. Masukkan angka (contoh: 0.67) atau tekan enter untuk default."
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                
+            elif message.lower().startswith("set kalori sufor"):
+                session["state"] = "SET_KALORI_SUFOR"
+                session["data"] = {}
+                reply = "🍼 Masukkan nilai kalori per ml susu formula (default 0.7 kkal/ml):\n\nContoh: 0.7 atau tekan enter untuk default"
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                
+            elif session["state"] == "SET_KALORI_SUFOR":
+                val = message.strip()
+                try:
+                    kcal = 0.7 if val == "" else float(val.replace(",", "."))
+                    if kcal <= 0 or kcal > 5:
+                        reply = "❌ Nilai kalori harus antara 0.1 - 5.0 kkal/ml"
+                    else:
+                        set_user_calorie_setting(user, "sufor", kcal)
+                        
+                        # Log setting change
+                        self.app_logger.log_user_action(
+                            user_id=user,
+                            action='calorie_setting_updated',
+                            success=True,
+                            details={'milk_type': 'sufor', 'new_value': kcal}
+                        )
+                        
+                        reply = f"✅ Nilai kalori susu formula berhasil diset ke {kcal} kkal/ml."
+                        session["state"] = None
+                        session["data"] = {}
+                except ValueError:
+                    reply = "❌ Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            
+            elif message.lower() == "lihat kalori":
+                try:
+                    settings = get_user_calorie_setting(user)
+                    reply = (
+                        f"⚙️ **Pengaturan Kalori Saat Ini:**\n\n"
+                        f"• ASI: {settings['asi']} kkal/ml\n"
+                        f"• Susu Formula: {settings['sufor']} kkal/ml\n\n"
+                        f"💡 Untuk mengubah:\n"
+                        f"• 'set kalori asi' untuk ASI\n"
+                        f"• 'set kalori sufor' untuk susu formula"
+                    )
+                except Exception as e:
+                    error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'get_calorie_settings'})
+                    reply = f"❌ Gagal mengambil pengaturan kalori. Kode error: {error_id}"
+            
+            else:
+                reply = "Perintah tidak dikenali dalam konteks pengaturan kalori."
+            
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_calorie_settings'})
+            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
+            return Response(str(resp), media_type="application/xml")
+
+    def handle_calorie_calculation(self, user: str, message: str) -> Response:
+        """Handle calorie calculation for milk"""
+        session = self.session_manager.get_session(user)
+        resp = MessagingResponse()
+        
+        try:
+            if message.lower() == "hitung kalori susu":
+                session["state"] = "CALC_MILK_VOL"
+                session["data"] = {}
+                reply = "🥛 Masukkan jumlah susu (ml):"
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                
+            elif session["state"] == "CALC_MILK_VOL":
+                is_valid, error_msg = InputValidator.validate_volume_ml(message)
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
+                else:
+                    session["data"]["volume_ml"] = float(message)
+                    session["state"] = "CALC_MILK_JENIS"
+                    reply = "🍼 Jenis susu?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                
+            elif session["state"] == "CALC_MILK_JENIS":
+                jenis = message.lower().strip()
+                if jenis not in ["asi", "sufor"]:
+                    reply = "❌ Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
+                else:
+                    try:
+                        kcal_settings = get_user_calorie_setting(user)
+                        kcal_per_ml = kcal_settings[jenis]
+                        total_calories = session["data"]["volume_ml"] * kcal_per_ml
+                        
+                        # Log calorie calculation
+                        self.app_logger.log_user_action(
+                            user_id=user,
+                            action='calorie_calculated',
+                            success=True,
+                            details={
+                                'volume_ml': session["data"]["volume_ml"],
+                                'milk_type': jenis,
+                                'calories': total_calories
+                            }
+                        )
+                        
+                        reply = (
+                            f"📊 **Hasil Kalkulasi Kalori:**\n\n"
+                            f"• Volume: {session['data']['volume_ml']} ml\n"
+                            f"• Jenis: {jenis.upper()}\n"
+                            f"• Kalori per ml: {kcal_per_ml} kkal\n"
+                            f"• **Total kalori: {total_calories:.2f} kkal**\n\n"
+                            f"💡 Untuk mengubah nilai kalori per ml:\n"
+                            f"• 'set kalori asi' untuk ASI\n"
+                            f"• 'set kalori sufor' untuk susu formula"
+                        )
+                        session["state"] = None
+                        session["data"] = {}
+                        
+                    except Exception as e:
+                        error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'calculate_calories'})
+                        reply = f"❌ Terjadi kesalahan saat menghitung kalori. Kode error: {error_id}"
+                    
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            
+            else:
+                reply = "Perintah tidak dikenali dalam konteks kalkulasi kalori."
+            
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_calorie_calculation'})
+            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
+            return Response(str(resp), media_type="application/xml")
+
     def handle_pumping_logging(self, user: str, message: str) -> Response:
         """Handle pumping logging flow"""
         session = self.session_manager.get_session(user)
@@ -451,175 +612,7 @@ class FeedingHandler:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_pumping_logging'})
             resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
             return Response(str(resp), media_type="application/xml")
-    
-    def handle_calorie_calculation(self, user: str, message: str) -> Response:
-        """Handle calorie calculation for milk"""
-        session = self.session_manager.get_session(user)
-        resp = MessagingResponse()
-        
-        try:
-            if message.lower() == "hitung kalori susu":
-                session["state"] = "CALC_MILK_VOL"
-                session["data"] = {}
-                reply = "🥛 Masukkan jumlah susu (ml):"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-                
-            elif session["state"] == "CALC_MILK_VOL":
-                is_valid, error_msg = InputValidator.validate_volume_ml(message)
-                if not is_valid:
-                    reply = f"❌ {error_msg}"
-                else:
-                    session["data"]["volume_ml"] = float(message)
-                    session["state"] = "CALC_MILK_JENIS"
-                    reply = "🍼 Jenis susu?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-                
-            elif session["state"] == "CALC_MILK_JENIS":
-                jenis = message.lower().strip()
-                if jenis not in ["asi", "sufor"]:
-                    reply = "❌ Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                else:
-                    try:
-                        kcal_settings = get_user_calorie_setting(user)
-                        kcal_per_ml = kcal_settings[jenis]
-                        total_calories = session["data"]["volume_ml"] * kcal_per_ml
-                        
-                        # Log calorie calculation
-                        self.app_logger.log_user_action(
-                            user_id=user,
-                            action='calorie_calculated',
-                            success=True,
-                            details={
-                                'volume_ml': session["data"]["volume_ml"],
-                                'milk_type': jenis,
-                                'calories': total_calories
-                            }
-                        )
-                        
-                        reply = (
-                            f"📊 **Hasil Kalkulasi Kalori:**\n\n"
-                            f"• Volume: {session['data']['volume_ml']} ml\n"
-                            f"• Jenis: {jenis.upper()}\n"
-                            f"• Kalori per ml: {kcal_per_ml} kkal\n"
-                            f"• **Total kalori: {total_calories:.2f} kkal**\n\n"
-                            f"💡 Untuk mengubah nilai kalori per ml:\n"
-                            f"• 'set kalori asi' untuk ASI\n"
-                            f"• 'set kalori sufor' untuk susu formula"
-                        )
-                        session["state"] = None
-                        session["data"] = {}
-                        
-                    except Exception as e:
-                        error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'calculate_calories'})
-                        reply = f"❌ Terjadi kesalahan saat menghitung kalori. Kode error: {error_id}"
-                    
-                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-            else:
-                reply = "Perintah tidak dikenali dalam konteks kalkulasi kalori."
-            
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
-            
-        except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_calorie_calculation'})
-            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
-            return Response(str(resp), media_type="application/xml")
-    
-    def handle_calorie_settings(self, user: str, message: str) -> Response:
-        """Handle calorie setting commands"""
-        session = self.session_manager.get_session(user)
-        resp = MessagingResponse()
-        
-        try:
-            if message.lower().startswith("set kalori asi"):
-                session["state"] = "SET_KALORI_ASI"
-                reply = "🤱 Masukkan nilai kalori per ml ASI (default 0.67 kkal/ml):\n\nContoh: 0.67 atau tekan enter untuk default"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-                
-            elif session["state"] == "SET_KALORI_ASI":
-                val = message.strip()
-                try:
-                    kcal = 0.67 if val == "" else float(val.replace(",", "."))
-                    if kcal <= 0 or kcal > 5:
-                        reply = "❌ Nilai kalori harus antara 0.1 - 5.0 kkal/ml"
-                    else:
-                        set_user_calorie_setting(user, "sufor", kcal)
-                        
-                        # Log setting change
-                        self.app_logger.log_user_action(
-                            user_id=user,
-                            action='calorie_setting_updated',
-                            success=True,
-                            details={'milk_type': 'sufor', 'new_value': kcal}
-                        )
-                        
-                        reply = f"✅ Nilai kalori susu formula berhasil diset ke {kcal} kkal/ml."
-                        session["state"] = None
-                        session["data"] = {}
-                except ValueError:
-                    reply = "❌ Format tidak valid. Masukkan angka (contoh: 0.7) atau tekan enter untuk default."
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-            elif message.lower() == "lihat kalori":
-                try:
-                    settings = get_user_calorie_setting(user)
-                    reply = (
-                        f"⚙️ **Pengaturan Kalori Saat Ini:**\n\n"
-                        f"• ASI: {settings['asi']} kkal/ml\n"
-                        f"• Susu Formula: {settings['sufor']} kkal/ml\n\n"
-                        f"💡 Untuk mengubah:\n"
-                        f"• 'set kalori asi' untuk ASI\n"
-                        f"• 'set kalori sufor' untuk susu formula"
-                    )
-                except Exception as e:
-                    error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'get_calorie_settings'})
-                    reply = f"❌ Gagal mengambil pengaturan kalori. Kode error: {error_id}"
-            
-            else:
-                reply = "Perintah tidak dikenali dalam konteks pengaturan kalori."
-            
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
-            
-        except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_calorie_settings'})
-            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
-            return Response(str(resp), media_type="application/xml")
-    
-    def handle_summary_requests(self, user: str, message: str) -> Response:
-        """Handle summary request commands"""
-        resp = MessagingResponse()
-        
-        try:
-            # Extract date from message if provided
-            date_match = re.search(r'\d{4}-\d{2}-\d{2}', message)
-            if "today" in message.lower() or "hari ini" in message.lower():
-                summary_date = datetime.now().strftime("%Y-%m-%d")
-            elif date_match:
-                summary_date = date_match.group(0)
-            else:
-                summary_date = datetime.now().strftime("%Y-%m-%d")
-            
-            if "mpasi" in message.lower():
-                reply = self._generate_mpasi_summary(user, summary_date)
-            elif "susu" in message.lower() or "milk" in message.lower():
-                reply = self._generate_milk_summary(user, summary_date)
-            elif "pumping" in message.lower():
-                reply = self._generate_pumping_summary(user, summary_date)
-            elif "kalori" in message.lower():
-                reply = self._generate_calorie_summary(user, summary_date)
-            else:
-                reply = self._generate_feeding_overview(user, summary_date)
-            
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
-            
-        except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_summary_requests'})
-            resp.message(f"❌ Terjadi kesalahan saat mengambil ringkasan. Kode error: {error_id}")
-            return Response(str(resp), media_type="application/xml")
-    
+
     def handle_health_tracking(self, user: str, message: str) -> Response:
         """Handle health tracking (poop logging)"""
         session = self.session_manager.get_session(user)
@@ -773,7 +766,40 @@ class FeedingHandler:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_health_tracking'})
             resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
             return Response(str(resp), media_type="application/xml")
-    
+
+    def handle_summary_requests(self, user: str, message: str) -> Response:
+        """Handle summary request commands"""
+        resp = MessagingResponse()
+        
+        try:
+            # Extract date from message if provided
+            date_match = re.search(r'\d{4}-\d{2}-\d{2}', message)
+            if "today" in message.lower() or "hari ini" in message.lower():
+                summary_date = datetime.now().strftime("%Y-%m-%d")
+            elif date_match:
+                summary_date = date_match.group(0)
+            else:
+                summary_date = datetime.now().strftime("%Y-%m-%d")
+            
+            if "mpasi" in message.lower():
+                reply = self._generate_mpasi_summary(user, summary_date)
+            elif "susu" in message.lower() or "milk" in message.lower():
+                reply = self._generate_milk_summary(user, summary_date)
+            elif "pumping" in message.lower():
+                reply = self._generate_pumping_summary(user, summary_date)
+            elif "kalori" in message.lower():
+                reply = self._generate_calorie_summary(user, summary_date)
+            else:
+                reply = self._generate_feeding_overview(user, summary_date)
+            
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_summary_requests'})
+            resp.message(f"❌ Terjadi kesalahan saat mengambil ringkasan. Kode error: {error_id}")
+            return Response(str(resp), media_type="application/xml")
+
     def _generate_mpasi_summary(self, user: str, date: str) -> str:
         """Generate MPASI summary for given date"""
         try:
@@ -808,7 +834,7 @@ class FeedingHandler:
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_mpasi_summary'})
             return f"❌ Gagal mengambil ringkasan MPASI. Kode error: {error_id}"
-    
+
     def _generate_milk_summary(self, user: str, date: str) -> str:
         """Generate milk summary for given date"""
         try:
@@ -866,7 +892,7 @@ class FeedingHandler:
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_milk_summary'})
             return f"❌ Gagal mengambil ringkasan susu. Kode error: {error_id}"
-    
+
     def _generate_pumping_summary(self, user: str, date: str) -> str:
         """Generate pumping summary for given date"""
         try:
