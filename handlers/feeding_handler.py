@@ -1,6 +1,6 @@
 # handlers/feeding_handler.py
 """
-Complete feeding operations handler - FIXED VERSION
+Complete feeding operations handler - CORRECTED VERSION
 Handles MPASI, milk intake, pumping, calorie calculations, and health tracking
 """
 from datetime import datetime
@@ -55,6 +55,12 @@ class FeedingHandler:
               session["state"] and session["state"].startswith("SET_KALORI")):
             return self.handle_calorie_settings(user, message)
         
+        # Health tracking (poop)
+        elif (message.lower() in ["log poop", "catat bab"] or
+              message.lower() in ["show poop log", "lihat riwayat bab"] or
+              session["state"] and session["state"].startswith("POOP")):
+            return self.handle_health_tracking(user, message)
+        
         # Summary commands
         elif message.lower().startswith("lihat ringkasan"):
             return self.handle_summary_requests(user, message)
@@ -72,14 +78,14 @@ class FeedingHandler:
                 # Start MPASI logging flow
                 session["state"] = "MPASI_DATE"
                 session["data"] = {}
-                reply = "📅 Tanggal makan? (YYYY-MM-DD, atau ketik 'today')"
+                reply = "Tanggal makan? (YYYY-MM-DD, atau ketik 'today')"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_DATE":
                 if message.lower().strip() == "today":
                     session["data"]["date"] = datetime.now().strftime("%Y-%m-%d")
                     session["state"] = "MPASI_TIME"
-                    reply = "⏰ Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
+                    reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
                 else:
                     is_valid, error_msg = InputValidator.validate_date(message)
                     if not is_valid:
@@ -87,7 +93,7 @@ class FeedingHandler:
                     else:
                         session["data"]["date"] = message
                         session["state"] = "MPASI_TIME"
-                        reply = "⏰ Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
+                        reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_TIME":
@@ -98,7 +104,7 @@ class FeedingHandler:
                 else:
                     session["data"]["time"] = time_input
                     session["state"] = "MPASI_VOL"
-                    reply = "🥄 Berapa ml yang dimakan?"
+                    reply = "Berapa ml yang dimakan?"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_VOL":
@@ -108,13 +114,13 @@ class FeedingHandler:
                 else:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "MPASI_DETAIL"
-                    reply = "🍽️ Makanan apa saja? (contoh: nasi 50gr, ayam 30gr, wortel 20gr)"
+                    reply = "Makanan apa saja? (contoh: nasi 50gr, ayam 30gr, wortel 20gr)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_DETAIL":
                 session["data"]["food_detail"] = InputValidator.sanitize_text_input(message, 200)
                 session["state"] = "MPASI_GRAMS"
-                reply = "📊 Masukkan menu dan porsi MPASI untuk estimasi kalori (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
+                reply = "Masukkan menu dan porsi MPASI untuk estimasi kalori (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_GRAMS":
@@ -141,7 +147,7 @@ class FeedingHandler:
                     
                     reply = (
                         f"✅ Catatan MPASI tersimpan!\n\n"
-                        f"📊 **Detail:**\n"
+                        f"Detail:\n"
                         f"• Tanggal: {session['data']['date']}\n"
                         f"• Jam: {session['data']['time']}\n"
                         f"• Volume: {session['data']['volume_ml']} ml\n"
@@ -186,7 +192,7 @@ class FeedingHandler:
             if message.lower() == "catat susu":
                 session["state"] = "MILK_DATE"
                 session["data"] = {}
-                reply = "📅 Tanggal minum susu? (YYYY-MM-DD atau 'today')"
+                reply = "Tanggal minum susu? (YYYY-MM-DD atau 'today')"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_DATE":
@@ -201,7 +207,7 @@ class FeedingHandler:
                     session["data"]["date"] = message
                 
                 session["state"] = "MILK_TIME"
-                reply = "⏰ Jam berapa minum susu? (format 24 jam, HH:MM, contoh: 09:00)"
+                reply = "Jam berapa minum susu? (format 24 jam, HH:MM, contoh: 09:00)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_TIME":
@@ -212,7 +218,7 @@ class FeedingHandler:
                 else:
                     session["data"]["time"] = time_input
                     session["state"] = "MILK_VOL"
-                    reply = "🍼 Berapa ml yang diminum?"
+                    reply = "Berapa ml yang diminum?"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_VOL":
@@ -222,7 +228,7 @@ class FeedingHandler:
                 else:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "MILK_TYPE"
-                    reply = "🥛 Susu apa yang diminum?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
+                    reply = "Susu apa yang diminum?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_TYPE":
@@ -230,7 +236,7 @@ class FeedingHandler:
                 if milk_type == "asi":
                     session["data"]["milk_type"] = "asi"
                     session["state"] = "ASI_METHOD"
-                    reply = "🤱 ASI diberikan bagaimana?\n• 'dbf' untuk direct breastfeeding\n• 'pumping' untuk hasil perahan"
+                    reply = "ASI diberikan bagaimana?\n• 'dbf' untuk direct breastfeeding\n• 'pumping' untuk hasil perahan"
                 elif milk_type == "sufor":
                     session["data"]["milk_type"] = "sufor"
                     # Calculate calories automatically
@@ -240,7 +246,7 @@ class FeedingHandler:
                         session["state"] = "MILK_NOTE"
                         reply = (
                             f"✅ Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal\n\n"
-                            f"📝 Catatan tambahan? (atau ketik 'skip')"
+                            f"Catatan tambahan? (atau ketik 'skip')"
                         )
                     except Exception as e:
                         error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'get_calorie_setting'})
@@ -254,7 +260,7 @@ class FeedingHandler:
                 if method in ["dbf", "pumping"]:
                     session["data"]["asi_method"] = method
                     session["state"] = "MILK_NOTE"
-                    reply = "📝 Catatan tambahan? (atau ketik 'skip')"
+                    reply = "Catatan tambahan? (atau ketik 'skip')"
                 else:
                     reply = "❌ Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
@@ -291,7 +297,7 @@ class FeedingHandler:
                     
                     reply = (
                         f"✅ Catatan minum susu tersimpan!\n\n"
-                        f"📊 **Detail:**\n"
+                        f"Detail:\n"
                         f"• Jam: {session['data']['time']}\n"
                         f"• Volume: {session['data']['volume_ml']} ml\n"
                         f"• Jenis: {session['data']['milk_type'].upper()}{extra}\n"
@@ -335,7 +341,7 @@ class FeedingHandler:
             if message.lower().startswith("set kalori asi"):
                 session["state"] = "SET_KALORI_ASI"
                 session["data"] = {}
-                reply = "🤱 Masukkan nilai kalori per ml ASI (default 0.67 kkal/ml):\n\nContoh: 0.67 atau tekan enter untuk default"
+                reply = "Masukkan nilai kalori per ml ASI (default 0.67 kkal/ml):\n\nContoh: 0.67 atau tekan enter untuk default"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "SET_KALORI_ASI":
@@ -365,7 +371,7 @@ class FeedingHandler:
             elif message.lower().startswith("set kalori sufor"):
                 session["state"] = "SET_KALORI_SUFOR"
                 session["data"] = {}
-                reply = "🍼 Masukkan nilai kalori per ml susu formula (default 0.7 kkal/ml):\n\nContoh: 0.7 atau tekan enter untuk default"
+                reply = "Masukkan nilai kalori per ml susu formula (default 0.7 kkal/ml):\n\nContoh: 0.7 atau tekan enter untuk default"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "SET_KALORI_SUFOR":
@@ -396,10 +402,10 @@ class FeedingHandler:
                 try:
                     settings = get_user_calorie_setting(user)
                     reply = (
-                        f"⚙️ **Pengaturan Kalori Saat Ini:**\n\n"
+                        f"Pengaturan Kalori Saat Ini:\n\n"
                         f"• ASI: {settings['asi']} kkal/ml\n"
                         f"• Susu Formula: {settings['sufor']} kkal/ml\n\n"
-                        f"💡 Untuk mengubah:\n"
+                        f"Untuk mengubah:\n"
                         f"• 'set kalori asi' untuk ASI\n"
                         f"• 'set kalori sufor' untuk susu formula"
                     )
@@ -427,7 +433,7 @@ class FeedingHandler:
             if message.lower() == "hitung kalori susu":
                 session["state"] = "CALC_MILK_VOL"
                 session["data"] = {}
-                reply = "🥛 Masukkan jumlah susu (ml):"
+                reply = "Masukkan jumlah susu (ml):"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "CALC_MILK_VOL":
@@ -437,7 +443,7 @@ class FeedingHandler:
                 else:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "CALC_MILK_JENIS"
-                    reply = "🍼 Jenis susu?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
+                    reply = "Jenis susu?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "CALC_MILK_JENIS":
@@ -463,12 +469,12 @@ class FeedingHandler:
                         )
                         
                         reply = (
-                            f"📊 **Hasil Kalkulasi Kalori:**\n\n"
+                            f"Hasil Kalkulasi Kalori:\n\n"
                             f"• Volume: {session['data']['volume_ml']} ml\n"
                             f"• Jenis: {jenis.upper()}\n"
                             f"• Kalori per ml: {kcal_per_ml} kkal\n"
-                            f"• **Total kalori: {total_calories:.2f} kkal**\n\n"
-                            f"💡 Untuk mengubah nilai kalori per ml:\n"
+                            f"• Total kalori: {total_calories:.2f} kkal\n\n"
+                            f"Untuk mengubah nilai kalori per ml:\n"
                             f"• 'set kalori asi' untuk ASI\n"
                             f"• 'set kalori sufor' untuk susu formula"
                         )
@@ -479,7 +485,7 @@ class FeedingHandler:
                         error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'calculate_calories'})
                         reply = f"❌ Terjadi kesalahan saat menghitung kalori. Kode error: {error_id}"
                     
-                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
             else:
                 reply = "Perintah tidak dikenali dalam konteks kalkulasi kalori."
@@ -501,7 +507,7 @@ class FeedingHandler:
             if message.lower() == "catat pumping":
                 session["state"] = "PUMP_DATE"
                 session["data"] = {}
-                reply = "📅 Tanggal pumping? (YYYY-MM-DD, atau 'today')"
+                reply = "Tanggal pumping? (YYYY-MM-DD, atau 'today')"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "PUMP_DATE":
@@ -516,7 +522,7 @@ class FeedingHandler:
                     session["data"]["date"] = message
                 
                 session["state"] = "PUMP_TIME"
-                reply = "⏰ Pukul berapa pumping? (format 24 jam, HH:MM, contoh: 07:30)"
+                reply = "Pukul berapa pumping? (format 24 jam, HH:MM, contoh: 07:30)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "PUMP_TIME":
@@ -527,37 +533,43 @@ class FeedingHandler:
                 else:
                     session["data"]["time"] = time_input
                     session["state"] = "PUMP_LEFT"
-                    reply = "🤱 Jumlah ASI dari payudara kiri (ml)? (masukkan 0 jika tidak ada)"
+                    reply = "Jumlah ASI dari payudara kiri (ml)? (masukkan 0 jika tidak ada)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "PUMP_LEFT":
-                is_valid, error_msg = InputValidator.validate_number(message, min_val=0, max_val=1000)
-                if not is_valid:
-                    reply = f"❌ {error_msg}"
-                else:
-                    session["data"]["left_ml"] = float(message)
-                    session["state"] = "PUMP_RIGHT"
-                    reply = "🤱 Jumlah ASI dari payudara kanan (ml)? (masukkan 0 jika tidak ada)"
+                try:
+                    left_ml = float(message)
+                    if left_ml < 0 or left_ml > 1000:
+                        reply = "❌ Volume harus antara 0-1000 ml"
+                    else:
+                        session["data"]["left_ml"] = left_ml
+                        session["state"] = "PUMP_RIGHT"
+                        reply = "Jumlah ASI dari payudara kanan (ml)? (masukkan 0 jika tidak ada)"
+                except ValueError:
+                    reply = "❌ Masukkan angka yang valid untuk volume ASI (ml)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "PUMP_RIGHT":
-                is_valid, error_msg = InputValidator.validate_number(message, min_val=0, max_val=1000)
-                if not is_valid:
-                    reply = f"❌ {error_msg}"
-                else:
-                    session["data"]["right_ml"] = float(message)
-                    session["state"] = "PUMP_BAGS"
-                    reply = "🥛 Berapa kantong ASI yang disimpan? (masukkan 0 jika langsung diminum)"
+                try:
+                    right_ml = float(message)
+                    if right_ml < 0 or right_ml > 1000:
+                        reply = "❌ Volume harus antara 0-1000 ml"
+                    else:
+                        session["data"]["right_ml"] = right_ml
+                        session["state"] = "PUMP_BAGS"
+                        reply = "Berapa kantong ASI yang disimpan? (masukkan 0 jika langsung diminum)"
+                except ValueError:
+                    reply = "❌ Masukkan angka yang valid untuk volume ASI (ml)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "PUMP_BAGS":
-                is_valid, error_msg = InputValidator.validate_number(message, min_val=0, max_val=50, allow_decimal=False)
-                if not is_valid:
-                    reply = f"❌ {error_msg}"
-                else:
-                    session["data"]["milk_bags"] = int(message)
-                    
-                    try:
+                try:
+                    bags = int(message)
+                    if bags < 0 or bags > 50:
+                        reply = "❌ Jumlah kantong harus antara 0-50"
+                    else:
+                        session["data"]["milk_bags"] = bags
+                        
                         save_pumping(user, session["data"])
                         
                         total_ml = session["data"]["left_ml"] + session["data"]["right_ml"]
@@ -577,7 +589,7 @@ class FeedingHandler:
                         
                         reply = (
                             f"✅ Catatan pumping tersimpan!\n\n"
-                            f"📊 **Detail:**\n"
+                            f"Detail:\n"
                             f"• Tanggal: {session['data']['date']} {session['data']['time']}\n"
                             f"• Total ASI: {total_ml} ml\n"
                             f"• Payudara kiri: {session['data']['left_ml']} ml\n"
@@ -588,19 +600,21 @@ class FeedingHandler:
                         session["state"] = None
                         session["data"] = {}
                         
-                    except (ValueError, ValidationError) as e:
-                        reply = f"❌ {str(e)}"
-                        self.app_logger.log_user_action(
-                            user_id=user,
-                            action='pumping_logged',
-                            success=False,
-                            details={'error': str(e)}
-                        )
-                    except Exception as e:
-                        error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_pumping'})
-                        reply = f"❌ Terjadi kesalahan saat menyimpan data pumping. Kode error: {error_id}"
-                    
-                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                except ValueError:
+                    reply = "❌ Masukkan angka bulat untuk jumlah kantong ASI"
+                except (ValidationError) as e:
+                    reply = f"❌ {str(e)}"
+                    self.app_logger.log_user_action(
+                        user_id=user,
+                        action='pumping_logged',
+                        success=False,
+                        details={'error': str(e)}
+                    )
+                except Exception as e:
+                    error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_pumping'})
+                    reply = f"❌ Terjadi kesalahan saat menyimpan data pumping. Kode error: {error_id}"
+                
+                self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
             else:
                 reply = "Perintah tidak dikenali dalam konteks pumping."
@@ -622,7 +636,7 @@ class FeedingHandler:
             if message.lower() in ["log poop", "catat bab"]:
                 session["state"] = "POOP_DATE"
                 session["data"] = {}
-                reply = "📅 Tanggal BAB? (YYYY-MM-DD, atau 'today')"
+                reply = "Tanggal BAB? (YYYY-MM-DD, atau 'today')"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "POOP_DATE":
@@ -637,7 +651,7 @@ class FeedingHandler:
                     session["data"]["date"] = message
                 
                 session["state"] = "POOP_TIME"
-                reply = "⏰ Jam berapa BAB? (format 24 jam, HH:MM, contoh: 07:30)"
+                reply = "Jam berapa BAB? (format 24 jam, HH:MM, contoh: 07:30)"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "POOP_TIME":
@@ -649,14 +663,14 @@ class FeedingHandler:
                     session["data"]["time"] = time_input
                     session["state"] = "POOP_BRISTOL"
                     reply = (
-                        f"💩 **Tekstur feses (Skala Bristol 1-7):**\n\n"
-                        f"1️⃣ Sangat keras (seperti kacang-kacang)\n"
-                        f"2️⃣ Berbentuk sosis, bergelombang\n"
-                        f"3️⃣ Sosis dengan retakan di permukaan\n"
-                        f"4️⃣ Lembut, berbentuk sosis (normal)\n"
-                        f"5️⃣ Potongan-potongan lunak\n"
-                        f"6️⃣ Potongan lembek, tepi bergerigi\n"
-                        f"7️⃣ Cair, tanpa bentuk padat\n\n"
+                        f"Tekstur feses (Skala Bristol 1-7):\n\n"
+                        f"1: Sangat keras (seperti kacang-kacang)\n"
+                        f"2: Berbentuk sosis, bergelombang\n"
+                        f"3: Sosis dengan retakan di permukaan\n"
+                        f"4: Lembut, berbentuk sosis (normal)\n"
+                        f"5: Potongan-potongan lunak\n"
+                        f"6: Potongan lembek, tepi bergerigi\n"
+                        f"7: Cair, tanpa bentuk padat\n\n"
                         f"Masukkan angka 1-7 sesuai tekstur:"
                     )
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
@@ -693,7 +707,7 @@ class FeedingHandler:
                         
                         reply = (
                             f"✅ Catatan BAB tersimpan!\n\n"
-                            f"📊 **Detail:**\n"
+                            f"Detail:\n"
                             f"• Tanggal: {session['data']['date']} {session['data']['time']}\n"
                             f"• Skala Bristol: {bristol}\n"
                             f"• Kondisi: {bristol_desc[bristol]}\n\n"
@@ -725,10 +739,10 @@ class FeedingHandler:
                 try:
                     logs = get_poop_log(user)
                     if logs:
-                        reply = "💩 **Riwayat BAB:**\n\n"
+                        reply = "Riwayat BAB:\n\n"
                         bristol_status = {
-                            1: "😰 Sangat keras", 2: "😟 Keras", 3: "😐 Normal-keras",
-                            4: "😊 Normal", 5: "😐 Normal-lembut", 6: "😟 Lembek", 7: "😰 Cair"
+                            1: "Sangat keras", 2: "Keras", 3: "Normal-keras",
+                            4: "Normal", 5: "Normal-lembut", 6: "Lembek", 7: "Cair"
                         }
                         
                         for i, log in enumerate(logs[:10], 1):  # Show last 10 entries
@@ -748,7 +762,7 @@ class FeedingHandler:
                         # Add tier info for free users
                         limits = get_tier_limits(user)
                         if limits.get("history_days"):
-                            reply += f"\n\n💡 Tier gratis dibatasi {limits['history_days']} hari riwayat."
+                            reply += f"\n\nTier gratis dibatasi {limits['history_days']} hari riwayat."
                     else:
                         reply = "Belum ada catatan BAB. Ketik 'catat bab' untuk menambah data."
                         
@@ -805,17 +819,17 @@ class FeedingHandler:
         try:
             rows = get_mpasi_summary(user, date, date)
             if not rows:
-                return f"📊 Belum ada catatan MPASI pada {date}.\n\nKetik 'catat mpasi' untuk menambah data."
+                return f"Belum ada catatan MPASI pada {date}.\n\nKetik 'catat mpasi' untuk menambah data."
             
             total_ml = sum([row[2] or 0 for row in rows])
             total_cal = sum([row[5] or 0 for row in rows])
             
             reply = (
-                f"📊 **Ringkasan MPASI ({date})**\n\n"
+                f"Ringkasan MPASI ({date})\n\n"
                 f"• Total sesi makan: {len(rows)}\n"
                 f"• Total volume: {total_ml} ml\n"
                 f"• Estimasi kalori: {total_cal} kkal\n\n"
-                f"**Detail per sesi:**\n"
+                f"Detail per sesi:\n"
             )
             
             for i, row in enumerate(rows[:5], 1):  # Show last 5 entries
@@ -840,7 +854,7 @@ class FeedingHandler:
         try:
             rows = get_milk_intake_summary(user, date, date)
             if not rows:
-                return f"📊 Belum ada catatan minum susu/ASI pada {date}.\n\nKetik 'catat susu' untuk menambah data."
+                return f"Belum ada catatan minum susu/ASI pada {date}.\n\nKetik 'catat susu' untuk menambah data."
 
             total_count = 0
             total_ml = 0
@@ -858,11 +872,11 @@ class FeedingHandler:
                     total_cal += values[4] if len(values) > 4 and values[4] is not None else 0
 
             reply = (
-                f"🍼 **Ringkasan Susu/ASI ({date})**\n\n"
+                f"Ringkasan Susu/ASI ({date})\n\n"
                 f"• Total sesi minum: {total_count}\n"
                 f"• Total volume: {total_ml} ml\n"
                 f"• Total kalori: {total_cal:.1f} kkal\n\n"
-                f"**Detail per jenis:**\n"
+                f"Detail per jenis:\n"
             )
 
             for r in rows:
@@ -898,7 +912,7 @@ class FeedingHandler:
         try:
             rows = get_pumping_summary(user, date, date)
             if not rows:
-                return f"📊 Belum ada catatan pumping pada {date}.\n\nKetik 'catat pumping' untuk menambah data."
+                return f"Belum ada catatan pumping pada {date}.\n\nKetik 'catat pumping' untuk menambah data."
             
             total_sessions = len(rows)
             total_left = sum([row[2] or 0 for row in rows])
@@ -907,13 +921,13 @@ class FeedingHandler:
             total_bags = sum([row[4] or 0 for row in rows])
             
             reply = (
-                f"🤱 **Ringkasan Pumping ({date})**\n\n"
+                f"Ringkasan Pumping ({date})\n\n"
                 f"• Total sesi: {total_sessions}\n"
                 f"• Total ASI: {total_ml} ml\n"
                 f"• Payudara kiri: {total_left} ml\n"
                 f"• Payudara kanan: {total_right} ml\n"
                 f"• Total kantong: {total_bags}\n\n"
-                f"**Detail per sesi:**\n"
+                f"Detail per sesi:\n"
             )
             
             for i, row in enumerate(rows[:5], 1):  # Show last 5 sessions
@@ -954,22 +968,22 @@ class FeedingHandler:
             total_calories = mpasi_calories + milk_calories
             
             if total_calories == 0:
-                return f"📊 Belum ada catatan kalori pada {date}.\n\nMulai dengan 'catat mpasi' atau 'catat susu'."
+                return f"Belum ada catatan kalori pada {date}.\n\nMulai dengan 'catat mpasi' atau 'catat susu'."
             
             # Calculate percentages
             mpasi_percent = (mpasi_calories / total_calories * 100) if total_calories > 0 else 0
             milk_percent = (milk_calories / total_calories * 100) if total_calories > 0 else 0
             
             return (
-                f"🔥 **Ringkasan Kalori ({date})**\n\n"
-                f"• **Total kalori: {total_calories:.1f} kkal**\n\n"
-                f"**Sumber kalori:**\n"
+                f"Ringkasan Kalori ({date})\n\n"
+                f"• Total kalori: {total_calories:.1f} kkal\n\n"
+                f"Sumber kalori:\n"
                 f"• MPASI: {mpasi_calories:.1f} kkal ({mpasi_percent:.1f}%)\n"
                 f"• Susu/ASI: {milk_calories:.1f} kkal ({milk_percent:.1f}%)\n\n"
-                f"**Detail:**\n"
+                f"Detail:\n"
                 f"• Sesi MPASI: {len(mpasi_rows)}\n"
                 f"• Sesi minum: {sum([r[2] or 0 for r in milk_rows])}\n\n"
-                f"💡 Ketik 'hitung kalori susu' untuk kalkulator kalori"
+                f"Ketik 'hitung kalori susu' untuk kalkulator kalori"
             )
             
         except Exception as e:
@@ -979,27 +993,56 @@ class FeedingHandler:
     def _generate_feeding_overview(self, user: str, date: str) -> str:
         """Generate comprehensive feeding overview"""
         try:
-            mpasi_summary = self._generate_mpasi_summary(user, date)
-            milk_summary = self._generate_milk_summary(user, date)
+            # Check if there's any feeding data for the date
+            mpasi_rows = get_mpasi_summary(user, date, date)
+            milk_rows = get_milk_intake_summary(user, date, date)
+            pumping_rows = get_pumping_summary(user, date, date)
             
-            if "Belum ada catatan" in mpasi_summary and "Belum ada catatan" in milk_summary:
+            has_mpasi = bool(mpasi_rows)
+            has_milk = bool(milk_rows)
+            has_pumping = bool(pumping_rows)
+            
+            if not any([has_mpasi, has_milk, has_pumping]):
                 return (
-                    f"📊 **Ringkasan Makan & Minum ({date})**\n\n"
+                    f"Ringkasan Makan & Minum ({date})\n\n"
                     f"Belum ada catatan untuk hari ini.\n\n"
-                    f"**Mulai mencatat:**\n"
+                    f"Mulai mencatat:\n"
                     f"• 'catat mpasi' untuk makanan\n"
                     f"• 'catat susu' untuk ASI/sufor\n"
                     f"• 'catat pumping' untuk ASI perah"
                 )
             
-            return (
-                f"📊 **Ringkasan Makan & Minum ({date})**\n\n"
-                f"Ketik perintah berikut untuk detail:\n"
-                f"• 'lihat ringkasan mpasi'\n"
-                f"• 'lihat ringkasan susu'\n"
-                f"• 'lihat ringkasan kalori'\n\n"
-                f"Atau ketik 'ringkasan hari ini' untuk ringkasan lengkap semua aktivitas."
-            )
+            # Generate quick overview
+            overview_lines = [f"Ringkasan Makan & Minum ({date})\n"]
+            
+            if has_mpasi:
+                mpasi_count = len(mpasi_rows)
+                mpasi_total_ml = sum([row[2] or 0 for row in mpasi_rows])
+                mpasi_total_cal = sum([row[5] or 0 for row in mpasi_rows])
+                overview_lines.append(f"• MPASI: {mpasi_count} sesi, {mpasi_total_ml}ml, {mpasi_total_cal} kkal")
+            
+            if has_milk:
+                milk_count = sum([r[2] or 0 for r in milk_rows])
+                milk_total_ml = sum([r[3] or 0 for r in milk_rows])
+                milk_total_cal = sum([r[4] or 0 for r in milk_rows])
+                overview_lines.append(f"• Susu/ASI: {milk_count} sesi, {milk_total_ml}ml, {milk_total_cal:.1f} kkal")
+            
+            if has_pumping:
+                pumping_count = len(pumping_rows)
+                pumping_total_ml = sum([(row[2] or 0) + (row[3] or 0) for row in pumping_rows])
+                pumping_bags = sum([row[4] or 0 for row in pumping_rows])
+                overview_lines.append(f"• Pumping: {pumping_count} sesi, {pumping_total_ml}ml, {pumping_bags} kantong")
+            
+            overview_lines.extend([
+                "",
+                "Detail lebih lanjut:",
+                "• 'lihat ringkasan mpasi'",
+                "• 'lihat ringkasan susu'", 
+                "• 'lihat ringkasan pumping'",
+                "• 'lihat ringkasan kalori'"
+            ])
+            
+            return "\n".join(overview_lines)
             
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_feeding_overview'})
@@ -1017,8 +1060,8 @@ class FeedingHandler:
         )
         
         reply = (
-            f"🤖 Perintah tidak dikenali dalam konteks makan/minum: '{message[:30]}...'\n\n"
-            f"**Perintah yang tersedia:**\n"
+            f"Perintah tidak dikenali dalam konteks makan/minum: '{message[:30]}...'\n\n"
+            f"Perintah yang tersedia:\n"
             f"• 'catat mpasi' - log makanan bayi\n"
             f"• 'catat susu' - log ASI/sufor\n"
             f"• 'catat pumping' - log ASI perah\n"
@@ -1030,32 +1073,3 @@ class FeedingHandler:
         
         resp.message(reply)
         return Response(str(resp), media_type="application/xml")
-                    else:
-                        set_user_calorie_setting(user, "asi", kcal)
-                        
-                        # Log setting change
-                        self.app_logger.log_user_action(
-                            user_id=user,
-                            action='calorie_setting_updated',
-                            success=True,
-                            details={'milk_type': 'asi', 'new_value': kcal}
-                        )
-                        
-                        reply = f"✅ Nilai kalori ASI berhasil diset ke {kcal} kkal/ml."
-                        session["state"] = None
-                        session["data"] = {}
-                except ValueError:
-                    reply = "❌ Format tidak valid. Masukkan angka (contoh: 0.67) atau tekan enter untuk default."
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-                
-            elif message.lower().startswith("set kalori sufor"):
-                session["state"] = "SET_KALORI_SUFOR"
-                reply = "🍼 Masukkan nilai kalori per ml susu formula (default 0.7 kkal/ml):\n\nContoh: 0.7 atau tekan enter untuk default"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
-                
-            elif session["state"] == "SET_KALORI_SUFOR":
-                val = message.strip()
-                try:
-                    kcal = 0.7 if val == "" else float(val.replace(",", "."))
-                    if kcal <= 0 or kcal > 5:
-                        reply = "❌ Nilai kalori harus antara 0.1 - 5.0 kkal/ml"
