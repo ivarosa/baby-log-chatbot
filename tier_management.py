@@ -5,7 +5,7 @@ Extracted from main.py for better organization
 """
 import os
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Any
 from database_pool import DatabasePool
 from database_security import DatabaseSecurity
