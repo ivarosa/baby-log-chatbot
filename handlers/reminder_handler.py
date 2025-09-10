@@ -19,9 +19,9 @@ import logging
 class ReminderHandler:
     """Handle all reminder-related operations"""
     
-    def __init__(self, session_manager, app_logger):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.app_logger = app_logger
+        self.logger = logger  # Use simple logger instead of app_logger
     
     def handle_reminder_commands(self, user: str, message: str, background_tasks: BackgroundTasks) -> Response:
         """Route reminder commands to appropriate handlers"""
