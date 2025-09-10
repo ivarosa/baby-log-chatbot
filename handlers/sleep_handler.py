@@ -162,6 +162,7 @@ class SleepHandler:
     
     def handle_end_sleep(self, user: str, message: str) -> Response:
         """Handle ending a sleep session"""
+        start_time = datetime.now()  # ADD THIS LINE
         resp = MessagingResponse()
         
         try:
