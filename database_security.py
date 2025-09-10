@@ -28,6 +28,14 @@ class DatabaseSecurity:
         return table_name
     
     @staticmethod
+    def get_user_column(database_url: str) -> str:
+        """Get appropriate user column name based on database type"""
+        if database_url:
+            return "user_phone"  # PostgreSQL
+        else:
+            return "user"        # SQLite
+    
+    @staticmethod
     def safe_query(query_template: str, params: Tuple[Any, ...], 
                    column_name: str = None, table_name: str = None) -> Tuple[str, Tuple]:
         if table_name:
