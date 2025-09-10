@@ -17,10 +17,10 @@ import logging
 class SummaryHandler:
     """Handle all summary and reporting operations"""
     
-    def __init__(self, session_manager, app_logger):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.app_logger = app_logger
-    
+        self.logger = logger  # Use simple logger instead of app_logger
+        
     def handle_summary_commands(self, user: str, message: str) -> Response:
         """Route summary commands to appropriate handlers"""
         
