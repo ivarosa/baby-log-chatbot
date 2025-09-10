@@ -307,31 +307,31 @@ def create_sqlite_tables(cursor):
 
 @ErrorHandler.handle_database_error
 def get_user_calorie_setting(user: str) -> Dict[str, float]:
-    """Get user calorie setting using connection pool"""
+    """Get user calorie setting - FIXED VERSION"""
     database_url = os.environ.get('DATABASE_URL')
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('calorie_setting')
     
-    with db_pool.get_connection() as conn:
-        c = conn.cursor()
-        if database_url:
-            c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=%s', (user,))
-        else:
-            c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=?', (user,))
-        
-        row = c.fetchone()
-        if row:
-            if isinstance(row, dict):  # PostgreSQL
-                return {"asi": row['asi_kcal'], "sufor": row['sufor_kcal']}
-            else:  # SQLite
-                return {"asi": row[0], "sufor": row[1]}
-        else:
-            # Insert default values
+    try:
+        with db_pool.get_connection() as conn:
+            c = conn.cursor()
             if database_url:
-                c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (%s)', (user,))
+                c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=%s', (user,))
             else:
-                c.execute(f'INSERT INTO {table_name} ({user_col}) VALUES (?)', (user,))
-            return {"asi": 0.67, "sufor": 0.7}
+                c.execute(f'SELECT asi_kcal, sufor_kcal FROM {table_name} WHERE {user_col}=?', (user,))
+            
+            row = c.fetchone()
+            if row:
+                if isinstance(row, dict):  # PostgreSQL
+                    return {"asi": row['asi_kcal'], "sufor": row['sufor_kcal']}
+                else:  # SQLite
+                    return {"asi": row[0], "sufor": row[1]}
+            else:
+                # Return defaults if no setting found
+                return {"asi": 0.67, "sufor": 0.7}
+    except Exception as e:
+        logging.error(f"Error getting calorie setting: {e}")
+        return {"asi": 0.67, "sufor": 0.7}
 
 @ErrorHandler.handle_database_error
 @ErrorHandler.handle_validation_error
