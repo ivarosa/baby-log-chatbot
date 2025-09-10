@@ -10,9 +10,9 @@ import logging
 class ChildHandler:
     """Handle child-related operations"""
     
-    def __init__(self, session_manager, db_pool):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.db_pool = db_pool
+        self.logger = logger  # Use simple logger instead of app_logger
     
     def handle_add_child(self, user: str, message: str) -> Response:
         """Handle 'tambah anak' command"""
