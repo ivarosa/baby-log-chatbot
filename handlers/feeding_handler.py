@@ -21,9 +21,9 @@ import re
 class FeedingHandler:
     """Handle all feeding-related operations"""
     
-    def __init__(self, session_manager, app_logger):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.app_logger = app_logger
+        self.logger = logger  # Use simple logger instead of app_logger
     
     def handle_feeding_commands(self, user: str, message: str) -> Response:
         """Route feeding commands to appropriate handlers"""
