@@ -456,7 +456,10 @@ def get_user_reminders(user: str) -> List[Tuple]:
                 FROM {table_name} WHERE {user_col}=? AND is_active=1
                 ORDER BY created_at DESC
             ''', (user,))
-        return c.fetchall()_validation_error
+        return c.fetchall()
+
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error        
 def set_user_calorie_setting(user: str, milk_type: str, value: float) -> None:
     """Set user calorie setting with validation"""
     # Validate milk_type
@@ -841,4 +844,72 @@ def get_pumping_summary(user: str, period_start: Optional[str] = None, period_en
         return c.fetchall()
 
 @ErrorHandler.handle_database_error
-@ErrorHandler.handle
+@ErrorHandler.handle_validation_error
+def save_poop(user: str, data: Dict[str, Any]) -> None:
+    """Save poop data with validation"""
+    # Validate input data
+    is_valid, error_msg = InputValidator.validate_date(data['date'])
+    if not is_valid:
+        raise ValidationError(f"Invalid date: {error_msg}")
+    
+    is_valid, error_msg = InputValidator.validate_time(data['time'])
+    if not is_valid:
+        raise ValidationError(f"Invalid time: {error_msg}")
+    
+    # Validate Bristol scale
+    try:
+        bristol = int(data['bristol_scale'])
+        if bristol < 1 or bristol > 7:
+            raise ValidationError("Bristol scale must be between 1-7")
+    except (ValueError, TypeError):
+        raise ValidationError("Invalid Bristol scale value")
+    
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('poop_log')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
+                VALUES (%s, %s, %s, %s)
+            ''', (user, data['date'], data['time'], data['bristol_scale']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, date, time, bristol_scale)
+                VALUES (?, ?, ?, ?)
+            ''', (user, data['date'], data['time'], data['bristol_scale']))
+
+def get_poop_log(user: str, period_start: Optional[str] = None, period_end: Optional[str] = None) -> List[Tuple]:
+    """Get poop log with optional date range"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('poop_log')
+    
+    from tier_management import get_tier_limits
+    limits = get_tier_limits(user)
+
+    # If no period is specified and free, restrict to history_days
+    if not period_start and not period_end and limits["history_days"]:
+        period_start = (datetime.now() - timedelta(days=limits["history_days"])).strftime('%Y-%m-%d')
+        period_end = datetime.now().strftime('%Y-%m-%d')
+
+    query = f"SELECT date, time, bristol_scale FROM {table_name} WHERE {user_col}=%s"
+    params = [user]
+
+    # Add date range filter if specified
+    if period_start and period_end:
+        query += " AND date BETWEEN %s AND %s"
+        params += [period_start, period_end]
+
+    query += " ORDER BY date DESC, time DESC"
+
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(query, tuple(params))
+        else:
+            sqlite_query = query.replace('%s', '?')
+            c.execute(sqlite_query, tuple(params))
+        return c.fetchall()
