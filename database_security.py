@@ -30,29 +30,14 @@ class DatabaseSecurity:
     @staticmethod
     def safe_query(query_template: str, params: Tuple[Any, ...], 
                    column_name: str = None, table_name: str = None) -> Tuple[str, Tuple]:
-        """
-        Safely construct queries with validated column/table names
-        
-        Example:
-            query, params = DatabaseSecurity.safe_query(
-                "SELECT * FROM {} WHERE {}=%s",
-                (user_value,),
-                column_name='user_phone',
-                table_name='child'
-            )
-        """
         if table_name:
             table_name = DatabaseSecurity.validate_table_name(table_name)
             query_template = query_template.replace('{}', table_name, 1)
         
         if column_name:
             column_name = DatabaseSecurity.validate_column_name(
-                column_name, 
-                DatabaseSecurity.ALLOWED_USER_COLUMNS
+                column_name, DatabaseSecurity.ALLOWED_USER_COLUMNS
             )
             query_template = query_template.replace('{}', column_name, 1)
         
         return query_template, params
-        row = c.fetchone()
-        conn.close()
-        return row
