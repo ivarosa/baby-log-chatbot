@@ -136,8 +136,8 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             return Response(str(resp), media_type="application/xml")
         
         # Simple routing - avoid complex routing for now
-        response_message = "🤖 Sistem berfungsi! Ketik 'help' untuk melihat perintah yang tersedia."
-        resp.message(response_message)
+        #response_message = "🤖 Sistem berfungsi! Ketik 'help' untuk melihat perintah yang tersedia."
+        #resp.message(response_message)
         return Response(str(resp), media_type="application/xml")
         
     except Exception as e:
