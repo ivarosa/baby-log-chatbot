@@ -1,5 +1,4 @@
 import os
-import psycopg
 import sqlite3
 from contextlib import contextmanager
 import logging
@@ -26,36 +25,75 @@ class DatabasePool:
         self.database_url = os.environ.get('DATABASE_URL')
         
         if self.database_url:
-            # PostgreSQL connection pool using a simple Queue-based approach
-            if self.database_url.startswith('postgres://'):
-                self.database_url = self.database_url.replace('postgres://', 'postgresql://', 1)
-            
-            # Create a simple connection pool using Queue
-            self._pool = Queue(maxsize=10)  # Max 10 connections
-            self._pool_size = 0
-            self._max_pool_size = 10
-            self._min_pool_size = 2
-            self._pool_lock = threading.Lock()
-            
-            # Pre-create minimum connections
-            for _ in range(self._min_pool_size):
-                try:
-                    conn = psycopg.connect(self.database_url, row_factory=psycopg.rows.dict_row)
-                    self._pool.put(conn)
-                    self._pool_size += 1
-                except Exception as e:
-                    logging.error(f"Failed to create initial connection: {e}")
-            
-            logging.info(f"PostgreSQL connection pool initialized with {self._pool_size} connections")
+            # PostgreSQL connection pool using psycopg2
+            try:
+                import psycopg2
+                import psycopg2.extras
+                from urllib.parse import urlparse
+                
+                # Parse the DATABASE_URL
+                parsed = urlparse(self.database_url)
+                
+                self.connection_params = {
+                    'host': parsed.hostname,
+                    'port': parsed.port or 5432,
+                    'database': parsed.path.lstrip('/'),
+                    'user': parsed.username,
+                    'password': parsed.password,
+                    'sslmode': 'require'  # For production PostgreSQL
+                }
+                
+                # Test connection
+                test_conn = psycopg2.connect(**self.connection_params)
+                test_conn.close()
+                
+                # Create a simple connection pool using Queue
+                self._pool = Queue(maxsize=10)  # Max 10 connections
+                self._pool_size = 0
+                self._max_pool_size = 10
+                self._min_pool_size = 2
+                self._pool_lock = threading.Lock()
+                
+                # Pre-create minimum connections
+                for _ in range(self._min_pool_size):
+                    try:
+                        conn = psycopg2.connect(**self.connection_params)
+                        conn.set_session(autocommit=False)
+                        self._pool.put(conn)
+                        self._pool_size += 1
+                    except Exception as e:
+                        logging.error(f"Failed to create initial connection: {e}")
+                
+                logging.info(f"PostgreSQL connection pool initialized with {self._pool_size} connections")
+                
+            except ImportError as e:
+                logging.error(f"PostgreSQL dependencies not available: {e}")
+                logging.info("Falling back to SQLite")
+                self._fallback_to_sqlite()
+            except Exception as e:
+                logging.error(f"PostgreSQL connection failed: {e}")
+                logging.info("Falling back to SQLite")
+                self._fallback_to_sqlite()
         else:
             # SQLite doesn't need pooling, but we'll manage connections
             self._pool = None
             logging.info("Using SQLite (no pooling)")
     
+    def _fallback_to_sqlite(self):
+        """Fallback to SQLite when PostgreSQL is not available"""
+        self.database_url = None
+        self._pool = None
+        logging.info("Fallback to SQLite database")
+    
     def _create_connection(self):
         """Create a new database connection"""
         if self.database_url:
-            return psycopg.connect(self.database_url, row_factory=psycopg.rows.dict_row)
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(**self.connection_params)
+            conn.set_session(autocommit=False)
+            # Use RealDictCursor for dict-like row access
+            return conn
         else:
             conn = sqlite3.connect('babylog.db')
             conn.row_factory = sqlite3.Row
@@ -74,7 +112,10 @@ class DatabasePool:
                 return conn
             except Exception:
                 # Connection is dead, create a new one
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
                 
         except Empty:
             # No connections available, create new one if under limit
@@ -97,7 +138,10 @@ class DatabasePool:
                     cur.execute("SELECT 1")
                 return conn
             except Exception:
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
                 # Recursive call to get another connection
                 return self._get_connection_from_pool()
         except Empty:
@@ -115,7 +159,10 @@ class DatabasePool:
                 self._pool.put_nowait(conn)
             except:
                 # Pool is full, close this connection
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
                 with self._pool_lock:
                     self._pool_size -= 1
         except Exception:
