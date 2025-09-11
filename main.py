@@ -7,6 +7,9 @@ import os
 import sys
 import asyncio
 import signal
+import json
+import logging
+import logging.handlers  # Fix: Explicitly import handlers module
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
@@ -14,7 +17,6 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from twilio.twiml.messaging_response import MessagingResponse
-import logging
 
 # Configure production logging
 logging.basicConfig(
