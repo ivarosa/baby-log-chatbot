@@ -1,41 +1,18 @@
+# validators.py - Production minimal version
 import re
 from datetime import datetime
 from typing import Optional, Tuple
 
 class InputValidator:
-    """Centralized input validation"""
-    
-    @staticmethod
-    def validate_phone_number(phone: str) -> Tuple[bool, Optional[str]]:
-        """
-        Validate WhatsApp phone number format
-        Returns: (is_valid, error_message)
-        """
-        # Pattern: whatsapp:+[country_code][number]
-        pattern = r'^whatsapp:\+\d{10,15}$'
-        
-        if not phone:
-            return False, "Nomor telepon tidak boleh kosong"
-        
-        if not re.match(pattern, phone):
-            return False, "Format nomor tidak valid. Format: whatsapp:+628xxx"
-        
-        return True, None
+    """Minimal input validation for production"""
     
     @staticmethod
     def validate_date(date_str: str) -> Tuple[bool, Optional[str]]:
         """Validate date format YYYY-MM-DD"""
         try:
             parsed_date = datetime.strptime(date_str, "%Y-%m-%d")
-            
-            # Check if date is not in future
             if parsed_date.date() > datetime.now().date():
                 return False, "Tanggal tidak boleh di masa depan"
-            
-            # Check if date is not too old (e.g., 5 years)
-            if (datetime.now() - parsed_date).days > 1825:
-                return False, "Tanggal terlalu lama (maksimal 5 tahun)"
-            
             return True, None
         except ValueError:
             return False, "Format tanggal salah. Gunakan YYYY-MM-DD"
@@ -43,88 +20,58 @@ class InputValidator:
     @staticmethod
     def validate_time(time_str: str) -> Tuple[bool, Optional[str]]:
         """Validate time format HH:MM"""
-        time_str = time_str.replace('.', ':')  # Handle common typo
-        
+        time_str = time_str.replace('.', ':')
         if not re.match(r'^\d{2}:\d{2}$', time_str):
-            return False, "Format waktu salah. Gunakan HH:MM (contoh: 09:30)"
-        
+            return False, "Format waktu salah. Gunakan HH:MM"
         try:
             datetime.strptime(time_str, "%H:%M")
             return True, None
         except ValueError:
-            return False, "Waktu tidak valid. Gunakan format 24 jam (00:00 - 23:59)"
-    
-    @staticmethod
-    def validate_number(value: str, min_val: float = None, 
-                       max_val: float = None, allow_decimal: bool = True) -> Tuple[bool, Optional[str]]:
-        """Validate numeric input"""
-        try:
-            if allow_decimal:
-                num = float(value.replace(',', '.'))
-            else:
-                num = int(value)
-            
-            if min_val is not None and num < min_val:
-                return False, f"Nilai minimal adalah {min_val}"
-            
-            if max_val is not None and num > max_val:
-                return False, f"Nilai maksimal adalah {max_val}"
-            
-            return True, None
-        except ValueError:
-            return False, "Masukkan angka yang valid"
-    
-    @staticmethod
-    def validate_bristol_scale(value: str) -> Tuple[bool, Optional[str]]:
-        """Validate Bristol Stool Scale (1-7)"""
-        is_valid, error = InputValidator.validate_number(
-            value, min_val=1, max_val=7, allow_decimal=False
-        )
-        if not is_valid:
-            return False, "Skala Bristol harus antara 1-7"
-        return True, None
+            return False, "Waktu tidak valid"
     
     @staticmethod
     def validate_weight_kg(value: str) -> Tuple[bool, Optional[str]]:
-        """Validate weight in kg (0.5 - 50 kg for babies)"""
-        is_valid, error = InputValidator.validate_number(
-            value, min_val=0.5, max_val=50
-        )
-        if not is_valid:
-            return False, "Berat badan bayi harus antara 0.5 - 50 kg"
-        return True, None
-
+        """Validate weight in kg"""
+        try:
+            weight = float(value.replace(',', '.'))
+            if weight < 0.5 or weight > 50:
+                return False, "Berat badan harus antara 0.5 - 50 kg"
+            return True, None
+        except ValueError:
+            return False, "Masukkan angka yang valid untuk berat badan"
     
     @staticmethod
     def validate_height_cm(value: str) -> Tuple[bool, Optional[str]]:
-        """Validate height in cm (30 - 150 cm for babies/toddlers)"""
-        is_valid, error = InputValidator.validate_number(
-            value, min_val=30, max_val=150
-        )
-        if not is_valid:
-            return False, "Tinggi badan harus antara 30 - 150 cm"
-        return True, None
+        """Validate height in cm"""
+        try:
+            height = float(value.replace(',', '.'))
+            if height < 30 or height > 150:
+                return False, "Tinggi badan harus antara 30 - 150 cm"
+            return True, None
+        except ValueError:
+            return False, "Masukkan angka yang valid untuk tinggi badan"
     
     @staticmethod
     def validate_volume_ml(value: str) -> Tuple[bool, Optional[str]]:
-        """Validate volume in ml (1 - 1000 ml)"""
-        is_valid, error = InputValidator.validate_number(
-            value, min_val=1, max_val=1000
-        )
-        if not is_valid:
-            return False, "Volume harus antara 1 - 1000 ml"
-        return True, None
+        """Validate volume in ml"""
+        try:
+            volume = float(value.replace(',', '.'))
+            if volume < 1 or volume > 1000:
+                return False, "Volume harus antara 1 - 1000 ml"
+            return True, None
+        except ValueError:
+            return False, "Masukkan angka yang valid untuk volume"
     
     @staticmethod
     def sanitize_text_input(text: str, max_length: int = 500) -> str:
-        """Sanitize free text input"""
-        # Remove any potential SQL injection attempts
+        """Sanitize text input"""
+        if not text:
+            return ""
+        
+        # Basic sanitization
         text = text.replace("'", "''")
         text = text.replace('"', '""')
-        text = text.replace(';', '')
-        text = text.replace('--', '')
-        text = text.replace('/*', '')
-        text = text.replace('*/', '')
+        text = re.sub(r'[;<>]', '', text)
         
         # Truncate if too long
         if len(text) > max_length:
