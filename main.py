@@ -1,99 +1,183 @@
-# main.py
+# main.py - PRODUCTION READY VERSION
 """
-PRODUCTION-READY main application file for baby tracking chatbot
-Fixed imports, error handling, and initialization issues
+Baby Log WhatsApp Chatbot - Production Ready
+Version: 2.1.0
 """
 import os
 import sys
+import asyncio
+import signal
+from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from twilio.twiml.messaging_response import MessagingResponse
-
-# Initialize logging first
 import logging
+
+# Configure production logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.handlers.RotatingFileHandler(
+            'babylog.log',
+            maxBytes=10485760,  # 10MB
+            backupCount=5
+        )
+    ]
 )
 logger = logging.getLogger(__name__)
 
-# Initialize database pool
+# Import core modules with error handling
 try:
     from database_pool import DatabasePool
+    from session_manager import SessionManager
+    from error_handler import ErrorHandler, WebhookErrorHandler
+    from constants import WELCOME_MESSAGE, HELP_MESSAGE, PANDUAN_MESSAGE
+    
+    # Initialize core components
     db_pool = DatabasePool()
-    logger.info("Database pool initialized")
+    session_manager = SessionManager(timeout_minutes=30)
+    
+    logger.info("Core components initialized successfully")
 except Exception as e:
-    logger.error(f"Database pool initialization failed: {e}")
-    db_pool = None
+    logger.critical(f"Failed to initialize core components: {e}")
+    sys.exit(1)
 
-# Core modules that should always be available
-from session_manager import SessionManager
+# Lifecycle management
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle"""
+    # Startup
+    try:
+        logger.info("Starting Baby Log application...")
+        
+        # Initialize database
+        await initialize_database()
+        
+        # Initialize handlers
+        await initialize_handlers()
+        
+        # Start background services
+        start_background_services()
+        
+        logger.info("Baby Log application started successfully")
+        
+        yield
+        
+    finally:
+        # Shutdown
+        logger.info("Shutting down Baby Log application...")
+        
+        # Stop background services
+        stop_background_services()
+        
+        # Close database connections
+        if db_pool:
+            db_pool.close_all()
+        
+        # Clean up sessions
+        session_manager.cleanup_expired_sessions()
+        
+        logger.info("Baby Log application shutdown completed")
 
-# Initialize session manager
-session_manager = SessionManager(timeout_minutes=30)
-
-# Initialize FastAPI app
+# Initialize FastAPI with lifecycle
 app = FastAPI(
     title="Baby Log WhatsApp Chatbot",
-    version="2.0.0",
-    description="Modular baby tracking chatbot with comprehensive logging"
+    version="2.1.0",
+    description="Production-ready baby tracking chatbot",
+    lifespan=lifespan
 )
 
-# Constants - inline to avoid import issues
-WELCOME_MESSAGE = (
-    "🍼 Selamat datang di Babylog! 👋\n\n"
-    "Saya siap membantu Anda mengelola catatan dan perkembangan si kecil.\n\n"
-    "🚀 Untuk memulai, coba perintah ini:\n"
-    "• `tambah anak` - Daftarkan data si kecil\n"
-    "• `catat timbang` - Log berat & tinggi badan\n"
-    "• `catat mpasi` - Log makanan bayi\n"
-    "• `catat susu` - Log ASI/susu formula\n"
-    "• `catat tidur` - Track jam tidur\n"
-    "• `ringkasan hari ini` - Lihat aktivitas harian\n\n"
-    "❓ Butuh bantuan? Ketik `bantuan` untuk panduan singkat atau `panduan` untuk daftar lengkap perintah."
+# Add security middleware
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["*"]  # Configure based on your domain
 )
 
-HELP_MESSAGE = (
-    "🤖 Bantuan Babylog:\n\n"
-    "👶 Data Anak & Tumbuh Kembang:\n"
-    "• `tambah anak` / `tampilkan anak`\n"
-    "• `catat timbang` / `lihat tumbuh kembang`\n\n"
-    "🍽️ Asupan Nutrisi:\n"
-    "• `catat mpasi` / `lihat ringkasan mpasi`\n"
-    "• `catat susu` / `lihat ringkasan susu`\n"
-    "• `catat pumping` / `lihat ringkasan pumping`\n\n"
-    "💤 Tidur & Kesehatan:\n"
-    "• `catat tidur` / `lihat tidur` / `riwayat tidur`\n"
-    "• `catat bab` / `lihat riwayat bab`\n\n"
-    "⏰ Pengingat Susu:\n"
-    "• `set reminder susu` / `show reminders`\n"
-    "• done [volume] / snooze [menit] / skip reminder\n\n"
-    "📊 Laporan:\n"
-    "• `ringkasan hari ini` - Summary lengkap\n\n"
-    "Ketik `panduan` untuk daftar lengkap perintah."
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure based on your needs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Global handler variables 
-child_handler = None
-feeding_handler = None
-sleep_handler = None
-reminder_handler = None
-summary_handler = None
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions"""
+    error_id = ErrorHandler.log_error(exc, context={'path': request.url.path})
+    logger.error(f"Unhandled exception: {exc}, Error ID: {error_id}")
+    
+    return Response(
+        content=f"Internal server error. Reference: {error_id}",
+        status_code=500
+    )
 
-def safe_import_handlers():
-    """Safely import and initialize handlers with fallback"""
+# Rate limiting decorator
+from functools import wraps
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+rate_limit_storage = defaultdict(list)
+
+def rate_limit(max_calls: int = 10, window_seconds: int = 60):
+    """Rate limiting decorator"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(request: Request, *args, **kwargs):
+            # Get client identifier
+            client_id = request.client.host if request.client else "unknown"
+            
+            # Clean old entries
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=window_seconds)
+            rate_limit_storage[client_id] = [
+                t for t in rate_limit_storage[client_id] if t > cutoff
+            ]
+            
+            # Check rate limit
+            if len(rate_limit_storage[client_id]) >= max_calls:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            
+            # Record this call
+            rate_limit_storage[client_id].append(now)
+            
+            return await func(request, *args, **kwargs)
+        return wrapper
+    return decorator
+
+# Initialize database with retry logic
+async def initialize_database(max_retries: int = 3):
+    """Initialize database with retry logic"""
+    for attempt in range(max_retries):
+        try:
+            from database.operations import init_database
+            init_database()
+            logger.info("Database initialized successfully")
+            return
+        except Exception as e:
+            logger.error(f"Database initialization attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                raise
+            await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+# Initialize handlers with fallback
+async def initialize_handlers():
+    """Initialize all handlers with fallback mechanisms"""
     global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler
     
     try:
-        # Try to import handlers
         from handlers.child_handler import ChildHandler
-        from handlers.feeding_handler import FeedingHandler  
+        from handlers.feeding_handler import FeedingHandler
         from handlers.sleep_handler import SleepHandler
         from handlers.reminder_handler import ReminderHandler
         from handlers.summary_handler import SummaryHandler
         
-        # Initialize handlers
         child_handler = ChildHandler(session_manager, logger)
         feeding_handler = FeedingHandler(session_manager, logger)
         sleep_handler = SleepHandler(session_manager, logger)
@@ -101,372 +185,350 @@ def safe_import_handlers():
         summary_handler = SummaryHandler(session_manager, logger)
         
         logger.info("All handlers initialized successfully")
-        return True
         
     except ImportError as e:
         logger.error(f"Handler import failed: {e}")
-        # Create fallback handlers
         create_fallback_handlers()
-        return True  # Still return True to continue
-    except Exception as e:
-        logger.error(f"Handler initialization failed: {e}")
-        create_fallback_handlers()
-        return True
 
 def create_fallback_handlers():
-    """Create simple fallback handlers"""
+    """Create minimal fallback handlers"""
     global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler
     
     class FallbackHandler:
         def __init__(self, name):
             self.name = name
             
-        def handle_command(self, user, message):
+        def handle_commands(self, user, message):
             resp = MessagingResponse()
-            resp.message(f"Fitur {self.name} sedang dalam perbaikan. Coba lagi nanti atau gunakan perintah dasar seperti 'help'.")
+            resp.message(f"Fitur {self.name} sedang maintenance. Silakan coba beberapa saat lagi.")
             return Response(str(resp), media_type="application/xml")
     
-    child_handler = FallbackHandler("anak")
+    child_handler = FallbackHandler("data anak")
     feeding_handler = FallbackHandler("makan/minum")
     sleep_handler = FallbackHandler("tidur")
     reminder_handler = FallbackHandler("pengingat")
     summary_handler = FallbackHandler("ringkasan")
     
-    logger.info("Fallback handlers created")
+    logger.warning("Using fallback handlers")
 
+# Background services management
+background_services = {}
+
+def start_background_services():
+    """Start all background services"""
+    try:
+        from background_services import start_all_background_services
+        start_all_background_services()
+        logger.info("Background services started")
+    except Exception as e:
+        logger.error(f"Failed to start background services: {e}")
+
+def stop_background_services():
+    """Stop all background services"""
+    try:
+        from background_services import stop_all_background_services
+        stop_all_background_services()
+        logger.info("Background services stopped")
+    except Exception as e:
+        logger.error(f"Failed to stop background services: {e}")
+
+# Health check endpoint with detailed status
 @app.get("/health")
 async def health_check():
     """Comprehensive health check"""
+    health_status = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": "2.1.0",
+        "environment": os.getenv("ENVIRONMENT", "production")
+    }
+    
+    # Check database
     try:
-        # Test database connection if available
-        db_status = "not_available"
-        if db_pool:
-            try:
-                with db_pool.get_connection() as conn:
-                    db_status = "connected"
-            except Exception as e:
-                db_status = f"error: {str(e)}"
-        
-        # Test handlers
-        handlers_status = {
-            'child_handler': child_handler is not None,
-            'feeding_handler': feeding_handler is not None,
-            'sleep_handler': sleep_handler is not None,
-            'reminder_handler': reminder_handler is not None,
-            'summary_handler': summary_handler is not None
-        }
-        
-        return {
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "database": db_status,
-            "handlers": handlers_status,
-            "version": "2.0.0",
-            "environment": os.getenv("ENVIRONMENT", "production")
+        with db_pool.get_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT 1")
+            health_status["database"] = "connected"
+    except Exception as e:
+        health_status["database"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check session manager
+    try:
+        stats = session_manager.get_stats()
+        health_status["sessions"] = {
+            "active": stats["total_sessions"],
+            "timeout_minutes": stats["timeout_minutes"]
         }
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "timestamp": datetime.now().isoformat(),
-            "error": str(e)
-        }
+        health_status["sessions"] = f"error: {str(e)}"
+        health_status["status"] = "degraded"
+    
+    # Check handlers
+    health_status["handlers"] = {
+        "child": child_handler is not None,
+        "feeding": feeding_handler is not None,
+        "sleep": sleep_handler is not None,
+        "reminder": reminder_handler is not None,
+        "summary": summary_handler is not None
+    }
+    
+    # Set appropriate status code
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    
+    return Response(
+        content=json.dumps(health_status),
+        status_code=status_code,
+        media_type="application/json"
+    )
 
+# Main webhook endpoint with comprehensive error handling
 @app.post("/webhook")
+@rate_limit(max_calls=30, window_seconds=60)  # 30 requests per minute per IP
+@WebhookErrorHandler.handle_webhook_error
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Main webhook handler with bulletproof error handling"""
+    """Main webhook handler with production-grade error handling"""
+    
+    # Extract and validate request
     try:
         form = await request.form()
         user = form.get("From")
         message = form.get("Body", "").strip()
         
-        logger.info(f"Webhook received - User: {user}, Message: {message[:50]}...")
-        
-        resp = MessagingResponse()
-        
-        # Universal cancel command (highest priority)
-        if message.lower() in ["batal", "cancel"]:
-            return handle_cancel_command(user, resp)
-        
-        # Welcome commands
-        if message.lower() in ["start", "mulai", "hi", "halo", "hello"]:
-            session_manager.clear_session(user)
-            resp.message(WELCOME_MESSAGE)
+        if not user or not message:
+            logger.warning(f"Invalid webhook request: user={user}, message_length={len(message)}")
+            resp = MessagingResponse()
+            resp.message("Invalid request")
             return Response(str(resp), media_type="application/xml")
         
-        # Help commands
-        if message.lower() in ["help", "bantuan"]:
-            resp.message(HELP_MESSAGE)
-            return Response(str(resp), media_type="application/xml")
+        # Sanitize inputs
+        from validators import InputValidator
+        user = InputValidator.sanitize_text_input(user, 100)
+        message = InputValidator.sanitize_text_input(message, 1000)
         
-        if message.lower() in ["panduan", "guide"]:
-            resp.message(get_panduan_message())
-            return Response(str(resp), media_type="application/xml")
-        
-        # Get current session
-        session = session_manager.get_session(user)
-        current_state = session.get("state")
-        
-        # Route commands with safe error handling
-        try:
-            # Handle session-based commands first
-            if current_state:
-                return handle_session_command(user, message, current_state)
-            
-            # Handle new commands
-            return handle_new_command(user, message)
-            
-        except Exception as e:
-            logger.error(f"Command handling error: {e}")
-            session_manager.clear_session(user)
-            resp.message("❌ Terjadi kesalahan. Sesi telah direset. Ketik 'help' untuk mulai lagi.")
-            return Response(str(resp), media_type="application/xml")
+        logger.info(f"Processing webhook: user={user[:20]}..., message={message[:50]}...")
         
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Request parsing error: {e}")
         resp = MessagingResponse()
-        resp.message("😔 Terjadi kesalahan sistem. Silakan coba lagi. Ketik 'help' untuk bantuan.")
+        resp.message("Error processing request")
+        return Response(str(resp), media_type="application/xml")
+    
+    # Process message with timeout
+    try:
+        result = await asyncio.wait_for(
+            process_message(user, message, background_tasks),
+            timeout=25.0  # 25 second timeout
+        )
+        return result
+        
+    except asyncio.TimeoutError:
+        logger.error(f"Message processing timeout for user {user}")
+        resp = MessagingResponse()
+        resp.message("⏱️ Request timeout. Silakan coba lagi.")
         return Response(str(resp), media_type="application/xml")
 
-def handle_session_command(user: str, message: str, current_state: str) -> Response:
-    """Handle commands based on current session state"""
+async def process_message(user: str, message: str, background_tasks: BackgroundTasks) -> Response:
+    """Process user message with proper routing"""
     resp = MessagingResponse()
     
-    try:
-        if current_state.startswith("ADDCHILD") or current_state.startswith("TIMBANG"):
-            if hasattr(child_handler, 'handle_add_child'):
-                return child_handler.handle_add_child(user, message)
-            else:
-                return child_handler.handle_command(user, message)
-                
-        elif current_state.startswith(("MPASI", "MILK", "PUMP", "CALC", "SET_KALORI", "POOP")):
-            if hasattr(feeding_handler, 'handle_feeding_commands'):
-                return feeding_handler.handle_feeding_commands(user, message)
-            else:
-                return feeding_handler.handle_command(user, message)
-                
-        elif current_state.startswith("REMINDER"):
-            if hasattr(reminder_handler, 'handle_reminder_setup'):
-                return reminder_handler.handle_reminder_setup(user, message)
-            else:
-                return reminder_handler.handle_command(user, message)
-                
-        elif current_state.startswith("SLEEP"):
-            if hasattr(sleep_handler, 'handle_sleep_commands'):
-                return sleep_handler.handle_sleep_commands(user, message)
-            else:
-                return sleep_handler.handle_command(user, message)
-        else:
-            # Unknown state, clear it
-            session_manager.clear_session(user)
-            resp.message("Sesi telah direset. Silakan mulai dengan perintah baru.")
-            return Response(str(resp), media_type="application/xml")
-            
-    except Exception as e:
-        logger.error(f"Session command error: {e}")
+    # Get session
+    session = session_manager.get_session(user)
+    current_state = session.get("state")
+    
+    # Universal commands
+    if message.lower() in ["batal", "cancel"]:
         session_manager.clear_session(user)
-        resp.message("❌ Terjadi kesalahan. Sesi telah direset.")
+        resp.message("✅ Sesi dibatalkan. Silakan mulai dengan perintah baru.")
+        return Response(str(resp), media_type="application/xml")
+    
+    if message.lower() in ["start", "mulai", "hi", "halo"]:
+        session_manager.clear_session(user)
+        resp.message(WELCOME_MESSAGE)
+        return Response(str(resp), media_type="application/xml")
+    
+    if message.lower() in ["help", "bantuan"]:
+        resp.message(HELP_MESSAGE)
+        return Response(str(resp), media_type="application/xml")
+    
+    if message.lower() in ["panduan", "guide"]:
+        resp.message(PANDUAN_MESSAGE)
+        return Response(str(resp), media_type="application/xml")
+    
+    # Route to appropriate handler
+    try:
+        # Session-based routing
+        if current_state:
+            return await route_session_command(user, message, current_state, background_tasks)
+        
+        # New command routing
+        return await route_new_command(user, message, background_tasks)
+        
+    except Exception as e:
+        logger.error(f"Message routing error: {e}")
+        session_manager.clear_session(user)
+        resp.message("❌ Terjadi kesalahan. Silakan coba lagi.")
         return Response(str(resp), media_type="application/xml")
 
-def handle_new_command(user: str, message: str) -> Response:
-    """Handle new commands"""
-    resp = MessagingResponse()
+async def route_session_command(user: str, message: str, state: str, background_tasks: BackgroundTasks) -> Response:
+    """Route commands based on session state"""
+    
+    # Child/growth commands
+    if state.startswith(("ADDCHILD", "TIMBANG")):
+        if hasattr(child_handler, 'handle_add_child'):
+            return child_handler.handle_add_child(user, message)
+        return child_handler.handle_commands(user, message)
+    
+    # Feeding commands
+    elif state.startswith(("MPASI", "MILK", "PUMP", "CALC", "SET_KALORI", "POOP")):
+        if hasattr(feeding_handler, 'handle_feeding_commands'):
+            return feeding_handler.handle_feeding_commands(user, message)
+        return feeding_handler.handle_commands(user, message)
+    
+    # Sleep commands
+    elif state.startswith("SLEEP"):
+        if hasattr(sleep_handler, 'handle_sleep_commands'):
+            return sleep_handler.handle_sleep_commands(user, message)
+        return sleep_handler.handle_commands(user, message)
+    
+    # Reminder commands
+    elif state.startswith("REMINDER"):
+        if hasattr(reminder_handler, 'handle_reminder_commands'):
+            return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+        return reminder_handler.handle_commands(user, message)
+    
+    # Unknown state
+    else:
+        session_manager.clear_session(user)
+        resp = MessagingResponse()
+        resp.message("Sesi tidak valid. Silakan mulai dengan perintah baru.")
+        return Response(str(resp), media_type="application/xml")
+
+async def route_new_command(user: str, message: str, background_tasks: BackgroundTasks) -> Response:
+    """Route new commands to appropriate handlers"""
     message_lower = message.lower()
     
-    try:
-        # === CHILD/GROWTH COMMANDS ===
-        if message_lower in ["tambah anak", "tampilkan anak", "catat timbang"] or message_lower.startswith("lihat tumbuh kembang"):
-            if hasattr(child_handler, 'handle_add_child'):
-                if message_lower == "tambah anak":
-                    return child_handler.handle_add_child(user, message)
-                elif message_lower == "tampilkan anak":
-                    return child_handler.handle_show_child(user)
-                else:
-                    return child_handler.handle_growth_tracking(user, message)
+    # Child commands
+    if message_lower in ["tambah anak", "tampilkan anak", "catat timbang"] or \
+       message_lower.startswith("lihat tumbuh kembang"):
+        if child_handler:
+            if message_lower == "tambah anak":
+                return child_handler.handle_add_child(user, message)
+            elif message_lower == "tampilkan anak":
+                return child_handler.handle_show_child(user)
             else:
-                return child_handler.handle_command(user, message)
-        
-        # === FEEDING COMMANDS ===
-        elif (message_lower in ["catat mpasi", "catat susu", "catat pumping", "hitung kalori susu"] or
-              message_lower.startswith(("set kalori", "lihat kalori", "lihat ringkasan")) or
-              message_lower in ["log poop", "catat bab", "show poop log", "lihat riwayat bab"]):
-            
-            if hasattr(feeding_handler, 'handle_feeding_commands'):
-                return feeding_handler.handle_feeding_commands(user, message)
-            else:
-                return feeding_handler.handle_command(user, message)
-        
-        # === SLEEP COMMANDS ===
-        elif (message_lower == "catat tidur" or
-              message_lower.startswith("selesai tidur") or
-              message_lower == "batal tidur" or
-              message_lower in ["lihat tidur", "tidur hari ini", "riwayat tidur", "sleep history"]):
-            
-            if hasattr(sleep_handler, 'handle_sleep_commands'):
-                return sleep_handler.handle_sleep_commands(user, message)
-            else:
-                return sleep_handler.handle_command(user, message)
-        
-        # === REMINDER COMMANDS ===
-        elif (message_lower in ["set reminder susu", "atur pengingat susu", "show reminders", "lihat pengingat"] or
-              message_lower.startswith(("done ", "snooze ")) or
-              message_lower in ["skip reminder"] or
-              message_lower.startswith(("stop reminder", "delete reminder"))):
-            
-            if hasattr(reminder_handler, 'handle_reminder_commands'):
-                return reminder_handler.handle_reminder_commands(user, message, BackgroundTasks())
-            else:
-                return reminder_handler.handle_command(user, message)
-        
-        # === SUMMARY COMMANDS ===
-        elif (any(cmd in message_lower for cmd in ["summary", "ringkasan"]) or
-              message_lower in ["growth summary", "ringkasan tumbuh kembang", "nutrition summary", "ringkasan nutrisi"]):
-            
-            if hasattr(summary_handler, 'handle_summary_commands'):
-                return summary_handler.handle_summary_commands(user, message)
-            else:
-                return summary_handler.handle_command(user, message)
-        
-        # === UNKNOWN COMMAND ===
-        else:
-            logger.info(f"Unknown command from {user}: {message}")
-            reply = (
-                f"🤖 Perintah tidak dikenali: '{message[:30]}...'\n\n"
-                f"Perintah utama:\n"
-                f"• `tambah anak` - Setup data anak\n"
-                f"• `catat mpasi` - Log makanan\n"
-                f"• `catat susu` - Log ASI/sufor\n"
-                f"• `catat tidur` - Track tidur\n"
-                f"• `ringkasan hari ini` - Summary\n\n"
-                f"Ketik `help` untuk bantuan lengkap."
-            )
-            resp.message(reply)
-            return Response(str(resp), media_type="application/xml")
+                return child_handler.handle_growth_tracking(user, message)
     
-    except Exception as e:
-        logger.error(f"New command error: {e}")
-        resp.message("❌ Terjadi kesalahan saat memproses perintah. Ketik 'help' untuk bantuan.")
-        return Response(str(resp), media_type="application/xml")
-
-def handle_cancel_command(user: str, resp: MessagingResponse) -> Response:
-    """Handle cancel command"""
-    try:
-        session = session_manager.get_session(user)
-        current_state = session.get("state")
-        
-        if current_state:
-            session_manager.clear_session(user)
-            resp.message("✅ Sesi dibatalkan. Ketik perintah baru untuk melanjutkan.")
-        else:
-            resp.message("ℹ️ Tidak ada sesi aktif. Ketik 'help' untuk melihat perintah yang tersedia.")
-        
-        return Response(str(resp), media_type="application/xml")
-    except Exception as e:
-        logger.error(f"Cancel command error: {e}")
-        resp.message("❌ Terjadi kesalahan.")
-        return Response(str(resp), media_type="application/xml")
-
-def get_panduan_message() -> str:
-    """Get complete guide message"""
-    return (
-        "📖 Panduan Lengkap Babylog:\n\n"
-        "👶 DATA ANAK:\n"
-        "• `tambah anak` - Daftarkan anak\n"
-        "• `tampilkan anak` - Lihat data\n"
-        "• `catat timbang` - Catat pertumbuhan\n\n"
-        "🍽️ MAKAN & MINUM:\n"
-        "• `catat mpasi` - Log makanan\n"
-        "• `catat susu` - Log ASI/sufor\n"
-        "• `catat pumping` - Log ASI perah\n\n"
-        "💤 TIDUR & KESEHATAN:\n"
-        "• `catat tidur` - Mulai track tidur\n"
-        "• `selesai tidur [HH:MM]` - Selesai\n"
-        "• `catat bab` - Log BAB\n\n"
-        "⏰ PENGINGAT:\n"
-        "• `set reminder susu` - Buat pengingat\n"
-        "• `done [volume]` - Respons cepat\n"
-        "• `snooze [menit]` - Tunda\n\n"
-        "📊 RINGKASAN:\n"
-        "• `ringkasan hari ini` - Summary harian\n"
-        "• `lihat ringkasan [jenis]` - Detail\n\n"
-        "Ketik `help` untuk bantuan singkat."
+    # Feeding commands
+    elif message_lower in ["catat mpasi", "catat susu", "catat pumping", "hitung kalori susu", 
+                          "catat bab", "log poop"] or \
+         message_lower.startswith(("set kalori", "lihat kalori", "lihat ringkasan")):
+        if feeding_handler and hasattr(feeding_handler, 'handle_feeding_commands'):
+            return feeding_handler.handle_feeding_commands(user, message)
+    
+    # Sleep commands
+    elif message_lower in ["catat tidur", "batal tidur", "lihat tidur", "riwayat tidur"] or \
+         message_lower.startswith("selesai tidur"):
+        if sleep_handler and hasattr(sleep_handler, 'handle_sleep_commands'):
+            return sleep_handler.handle_sleep_commands(user, message)
+    
+    # Reminder commands
+    elif message_lower in ["set reminder susu", "show reminders", "skip reminder"] or \
+         message_lower.startswith(("done ", "snooze ", "stop reminder", "delete reminder")):
+        if reminder_handler and hasattr(reminder_handler, 'handle_reminder_commands'):
+            return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+    
+    # Summary commands
+    elif any(cmd in message_lower for cmd in ["summary", "ringkasan"]):
+        if summary_handler and hasattr(summary_handler, 'handle_summary_commands'):
+            return summary_handler.handle_summary_commands(user, message)
+    
+    # Unknown command
+    resp = MessagingResponse()
+    resp.message(
+        f"❓ Perintah tidak dikenali: '{message[:30]}...'\n\n"
+        f"Perintah utama:\n"
+        f"• `tambah anak`\n"
+        f"• `catat mpasi`\n"
+        f"• `catat susu`\n"
+        f"• `catat tidur`\n"
+        f"• `ringkasan hari ini`\n\n"
+        f"Ketik `help` untuk bantuan."
     )
+    return Response(str(resp), media_type="application/xml")
 
-def safe_database_init():
-    """Safely initialize database"""
-    try:
-        if db_pool:
-            from database.operations import init_database
-            init_database()
-            logger.info("Database initialized successfully")
-            return True
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        return False
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize application on startup"""
-    try:
-        logger.info("Starting Baby Log application v2.0.0")
-        
-        # Initialize database (non-blocking)
-        safe_database_init()
-        
-        # Initialize handlers (with fallback)
-        safe_import_handlers()
-        
-        logger.info("Baby Log application started successfully")
-        
-    except Exception as e:
-        logger.error(f"Startup error (non-critical): {e}")
-        # Don't raise - let the app start even if some components fail
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    try:
-        # Close database connections
-        if db_pool:
-            db_pool.close_all()
-        
-        logger.info("Baby Log application shutdown completed")
-        
-    except Exception as e:
-        logger.error(f"Shutdown error: {e}")
-
-# Chart endpoints (optional, with error handling)
+# Chart generation endpoints (optional features)
 @app.get("/mpasi-milk-graph/{user_phone}")
+@rate_limit(max_calls=10, window_seconds=60)
 async def mpasi_milk_graph(user_phone: str):
-    """Generate MPASI milk chart (with fallback)"""
+    """Generate MPASI/milk chart with error handling"""
     try:
         from chart_generator import generate_chart_response, normalize_user_phone
         user_phone = normalize_user_phone(user_phone)
         return await generate_chart_response(user_phone)
     except ImportError:
-        return Response("Chart generation not available - missing dependencies", media_type="text/plain")
+        raise HTTPException(status_code=503, detail="Chart generation not available")
     except Exception as e:
         logger.error(f"Chart generation error: {e}")
-        return Response(f"Chart generation failed: {str(e)}", media_type="text/plain")
+        raise HTTPException(status_code=500, detail="Chart generation failed")
 
 @app.get("/report-mpasi-milk/{user_phone}")
+@rate_limit(max_calls=5, window_seconds=60)
 async def report_mpasi_milk(user_phone: str):
-    """Generate PDF report (with fallback)"""
+    """Generate PDF report with error handling"""
     try:
         from chart_generator import generate_pdf_response, normalize_user_phone
         user_phone = normalize_user_phone(user_phone)
         return await generate_pdf_response(user_phone)
     except ImportError:
-        return Response("PDF generation not available - missing dependencies", media_type="text/plain")
+        raise HTTPException(status_code=503, detail="PDF generation not available")
     except Exception as e:
         logger.error(f"PDF generation error: {e}")
-        return Response(f"PDF generation failed: {str(e)}", media_type="text/plain")
+        raise HTTPException(status_code=500, detail="PDF generation failed")
 
-# For Railway deployment
+# Admin endpoints (protected)
+@app.get("/admin/stats")
+async def admin_stats(api_key: str = None):
+    """Get application statistics"""
+    if api_key != os.getenv("ADMIN_API_KEY"):
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    
+    stats = {
+        "sessions": session_manager.get_stats(),
+        "database": db_pool.get_stats() if db_pool else {},
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    return stats
+
+# Graceful shutdown handler
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Main entry point
 if __name__ == "__main__":
     import uvicorn
+    
+    # Production configuration
     port = int(os.getenv("PORT", 8000))
     host = "0.0.0.0"
+    workers = int(os.getenv("WORKERS", 4))
     
-    logger.info(f"Starting server on {host}:{port}")
-    uvicorn.run("main:app", host=host, port=port, reload=False, log_level="info")
+    logger.info(f"Starting server on {host}:{port} with {workers} workers")
+    
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        workers=workers,
+        loop="uvloop",  # Better performance
+        access_log=True,
+        log_level="info",
+        reload=False  # Never use reload in production
+    )
