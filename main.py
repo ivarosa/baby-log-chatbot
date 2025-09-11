@@ -115,15 +115,6 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         user = form.get("From")
         message = form.get("Body", "").strip()
         
-        # Check if handlers are initialized
-        if not child_handler:
-            resp = MessagingResponse()
-            resp.message("⚠️ Sistem sedang menginisialisasi. Silakan coba lagi dalam beberapa detik.")
-            return Response(str(resp), media_type="application/xml")
-        
-        logger.info(f"Received message from {user}: {message[:50]}")
-        
-        session = session_manager.get_session(user)
         resp = MessagingResponse()
         
         # Universal commands (no session state)
