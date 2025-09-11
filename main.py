@@ -109,20 +109,29 @@ async def health_check():
 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Main webhook handler with better error handling"""
+    """Main webhook handler with complete command routing"""
     try:
         form = await request.form()
         user = form.get("From")
         message = form.get("Body", "").strip()
         
+        # Log incoming message
+        logger.info(f"Message from {user}: {message}")
+        
         resp = MessagingResponse()
         
-        # Universal commands (no session state)
+        # Check if handlers are initialized
+        if not all([child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler]):
+            resp.message("🔧 Sistem sedang dalam pemeliharaan. Silakan coba lagi dalam beberapa saat.")
+            return Response(str(resp), media_type="application/xml")
+        
+        # Universal cancel command (highest priority)
         if message.lower() in ["batal", "cancel"]:
             return handle_cancel_command(user, resp)
         
         # Welcome commands
-        if message.lower() in ["start", "mulai", "hi", "halo"]:
+        if message.lower() in ["start", "mulai", "hi", "halo", "hello"]:
+            session_manager.clear_session(user)  # Clear any existing session
             resp.message(WELCOME_MESSAGE)
             return Response(str(resp), media_type="application/xml")
         
@@ -135,26 +144,135 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp.message(PANDUAN_MESSAGE)
             return Response(str(resp), media_type="application/xml")
         
-        # Simple routing - avoid complex routing for now
-        #response_message = "🤖 Sistem berfungsi! Ketik 'help' untuk melihat perintah yang tersedia."
-        #resp.message(response_message)
-        return Response(str(resp), media_type="application/xml")
+        # Get current session to check for ongoing flows
+        session = session_manager.get_session(user)
+        current_state = session.get("state")
+        
+        # Route based on current session state first (ongoing conversations)
+        if current_state:
+            try:
+                if current_state.startswith("ADDCHILD") or current_state.startswith("TIMBANG"):
+                    return child_handler.handle_add_child(user, message)
+                elif current_state.startswith("MPASI"):
+                    return feeding_handler.handle_mpasi_logging(user, message)
+                elif current_state.startswith("MILK"):
+                    return feeding_handler.handle_milk_logging(user, message)
+                elif current_state.startswith("PUMP"):
+                    return feeding_handler.handle_pumping_logging(user, message)
+                elif current_state.startswith("CALC"):
+                    return feeding_handler.handle_calorie_calculation(user, message)
+                elif current_state.startswith("SET_KALORI"):
+                    return feeding_handler.handle_calorie_settings(user, message)
+                elif current_state.startswith("POOP"):
+                    return feeding_handler.handle_health_tracking(user, message)
+                elif current_state.startswith("REMINDER"):
+                    return reminder_handler.handle_reminder_setup(user, message)
+                elif current_state.startswith("SLEEP"):
+                    return sleep_handler.handle_sleep_commands(user, message)
+                else:
+                    # Unknown state, clear it
+                    session_manager.clear_session(user)
+            except Exception as e:
+                logger.error(f"Error in session state handler: {e}")
+                session_manager.clear_session(user)
+                resp.message("❌ Terjadi kesalahan. Sesi telah direset. Silakan mulai lagi.")
+                return Response(str(resp), media_type="application/xml")
+        
+        # Route new commands based on content
+        message_lower = message.lower()
+        
+        try:
+            # === CHILD/GROWTH COMMANDS ===
+            if (message_lower == "tambah anak" or 
+                message_lower == "tampilkan anak" or
+                message_lower == "catat timbang" or
+                message_lower.startswith("lihat tumbuh kembang")):
+                
+                if message_lower == "tambah anak":
+                    return child_handler.handle_add_child(user, message)
+                elif message_lower == "tampilkan anak":
+                    return child_handler.handle_show_child(user)
+                else:
+                    return child_handler.handle_growth_tracking(user, message)
+            
+            # === FEEDING COMMANDS ===
+            elif (message_lower == "catat mpasi" or
+                  message_lower == "catat susu" or
+                  message_lower == "catat pumping" or
+                  message_lower == "hitung kalori susu" or
+                  message_lower.startswith("set kalori") or
+                  message_lower == "lihat kalori" or
+                  message_lower.startswith("lihat ringkasan") or
+                  message_lower in ["log poop", "catat bab", "show poop log", "lihat riwayat bab"]):
+                
+                return feeding_handler.handle_feeding_commands(user, message)
+            
+            # === SLEEP COMMANDS ===
+            elif (message_lower == "catat tidur" or
+                  message_lower.startswith("selesai tidur") or
+                  message_lower == "batal tidur" or
+                  message_lower in ["lihat tidur", "tidur hari ini"] or
+                  message_lower in ["riwayat tidur", "sleep history"]):
+                
+                return sleep_handler.handle_sleep_commands(user, message)
+            
+            # === REMINDER COMMANDS ===
+            elif (message_lower in ["set reminder susu", "atur pengingat susu"] or
+                  message_lower in ["show reminders", "lihat pengingat"] or
+                  message_lower.startswith("done ") or
+                  message_lower.startswith("snooze ") or
+                  message_lower == "skip reminder" or
+                  message_lower.startswith("stop reminder") or
+                  message_lower.startswith("delete reminder")):
+                
+                return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+            
+            # === SUMMARY COMMANDS ===
+            elif (any(cmd in message_lower for cmd in ["summary", "ringkasan"]) or
+                  message_lower in ["growth summary", "ringkasan tumbuh kembang", "summary pertumbuhan"] or
+                  message_lower in ["nutrition summary", "ringkasan nutrisi", "summary gizi"]):
+                
+                return summary_handler.handle_summary_commands(user, message)
+            
+            # === UNKNOWN COMMAND ===
+            else:
+                logger.info(f"Unknown command from {user}: {message}")
+                reply = (
+                    f"🤖 **Perintah tidak dikenali:** '{message[:30]}...'\n\n"
+                    f"**Perintah utama:**\n"
+                    f"• `tambah anak` - Setup data anak\n"
+                    f"• `catat mpasi` - Log makanan\n"
+                    f"• `catat susu` - Log ASI/sufor\n"
+                    f"• `catat tidur` - Track tidur\n"
+                    f"• `summary today` - Ringkasan hari ini\n\n"
+                    f"Ketik `help` untuk bantuan lengkap."
+                )
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+        
+        except Exception as e:
+            logger.error(f"Error routing command '{message}' from {user}: {e}")
+            resp.message("❌ Terjadi kesalahan saat memproses perintah. Silakan coba lagi.")
+            return Response(str(resp), media_type="application/xml")
         
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         resp = MessagingResponse()
-        resp.message("😔 Terjadi kesalahan sistem. Silakan coba lagi.")
+        resp.message("😔 Terjadi kesalahan sistem. Silakan coba lagi dalam beberapa saat.")
         return Response(str(resp), media_type="application/xml")
 
 def handle_cancel_command(user: str, resp: MessagingResponse) -> Response:
     """Handle cancel command"""
     try:
         session = session_manager.get_session(user)
-        session["state"] = None
-        session["data"] = {}
-        session_manager.update_session(user, state=None, data={})
+        current_state = session.get("state")
         
-        resp.message("✅ Sesi dibatalkan. Anda bisa mulai kembali dengan perintah baru.")
+        if current_state:
+            session_manager.clear_session(user)
+            resp.message("✅ Sesi dibatalkan. Anda bisa mulai kembali dengan perintah baru.")
+        else:
+            resp.message("ℹ️ Tidak ada sesi aktif untuk dibatalkan. Ketik 'help' untuk melihat perintah yang tersedia.")
+        
         return Response(str(resp), media_type="application/xml")
     except Exception as e:
         logger.error(f"Cancel command error: {e}")
