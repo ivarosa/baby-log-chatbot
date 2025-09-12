@@ -29,6 +29,9 @@ class FeedingHandler:
         """Route feeding commands to appropriate handlers"""
         session = self.session_manager.get_session(user)
         
+        #DEBUG
+        print(f"DEBUG: message='{message}', message.lower()='{message.lower()}', session_state='{session.get('state')}'")
+        
         # MPASI-related commands
         if (message.lower() == "catat mpasi" or 
             session["state"] and session["state"].startswith("MPASI")):
