@@ -174,25 +174,49 @@ async def initialize_handlers():
     global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler
     
     try:
+        logger.info("Starting handler initialization...")
+        
         from handlers.child_handler import ChildHandler
+        logger.info("ChildHandler imported successfully")
+        
         from handlers.feeding_handler import FeedingHandler
+        logger.info("FeedingHandler imported successfully")
+        
         from handlers.sleep_handler import SleepHandler
+        logger.info("SleepHandler imported successfully")
+        
         from handlers.reminder_handler import ReminderHandler
+        logger.info("ReminderHandler imported successfully")
+        
         from handlers.summary_handler import SummaryHandler
+        logger.info("SummaryHandler imported successfully")
         
         child_handler = ChildHandler(session_manager, logger)
+        logger.info("ChildHandler initialized")
+        
         feeding_handler = FeedingHandler(session_manager, logger)
+        logger.info("FeedingHandler initialized")
+        
         sleep_handler = SleepHandler(session_manager, logger)
+        logger.info("SleepHandler initialized")
+        
         reminder_handler = ReminderHandler(session_manager, logger)
+        logger.info("ReminderHandler initialized")
+        
         summary_handler = SummaryHandler(session_manager, logger)
+        logger.info("SummaryHandler initialized")
         
         logger.info("All handlers initialized successfully")
         
     except ImportError as e:
         logger.error(f"Handler import failed: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         create_fallback_handlers()
-    except Exception as e:  # Add this to catch other errors
+    except Exception as e:
         logger.error(f"Handler initialization failed: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         create_fallback_handlers()
         
 def create_fallback_handlers():
