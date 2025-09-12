@@ -146,7 +146,7 @@ class FeedingHandler:
                     save_mpasi(user, session["data"])
                     
                     # Log successful MPASI entry
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='mpasi_logged',
                         success=True,
@@ -154,7 +154,7 @@ class FeedingHandler:
                             'volume_ml': session["data"]["volume_ml"],
                             'food_detail': session["data"]["food_detail"]
                         }
-                    )
+                    ")
                     
                     reply = (
                         f"✅ Catatan MPASI tersimpan!\n\n"
@@ -171,12 +171,12 @@ class FeedingHandler:
                     
                 except (ValueError, ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='mpasi_logged',
                         success=False,
                         details={'error': str(e)}
-                    )
+                    ")
                 except Exception as e:
                     error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_mpasi'})
                     reply = f"❌ Terjadi kesalahan saat menyimpan data MPASI. Kode error: {error_id}"
@@ -289,7 +289,7 @@ class FeedingHandler:
                     save_milk_intake(user, session["data"])
                     
                     # Log successful milk intake
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='milk_logged',
                         success=True,
@@ -298,7 +298,7 @@ class FeedingHandler:
                             'milk_type': session["data"]["milk_type"],
                             'calories': session["data"].get("sufor_calorie", 0)
                         }
-                    )
+                    ")
                     
                     extra = ""
                     if session["data"]["milk_type"] == "sufor":
@@ -320,12 +320,12 @@ class FeedingHandler:
                     
                 except (ValueError, ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='milk_logged',
                         success=False,
                         details={'error': str(e)}
-                    )
+                    ")
                 except Exception as e:
                     error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_milk_intake'})
                     reply = f"❌ Terjadi kesalahan saat menyimpan data susu. Kode error: {error_id}"
@@ -365,12 +365,12 @@ class FeedingHandler:
                         set_user_calorie_setting(user, "asi", kcal)
                         
                         # Log setting change
-                        self.app_logger.log_user_action(
+                        self.logger.info(f"User action:
                             user_id=user,
                             action='calorie_setting_updated',
                             success=True,
                             details={'milk_type': 'asi', 'new_value': kcal}
-                        )
+                        ")
                         
                         reply = f"✅ Nilai kalori ASI berhasil diset ke {kcal} kkal/ml."
                         session["state"] = None
@@ -395,12 +395,12 @@ class FeedingHandler:
                         set_user_calorie_setting(user, "sufor", kcal)
                         
                         # Log setting change
-                        self.app_logger.log_user_action(
+                        self.logger.info(f"User action:
                             user_id=user,
                             action='calorie_setting_updated',
                             success=True,
                             details={'milk_type': 'sufor', 'new_value': kcal}
-                        )
+                        ")
                         
                         reply = f"✅ Nilai kalori susu formula berhasil diset ke {kcal} kkal/ml."
                         session["state"] = None
@@ -468,7 +468,7 @@ class FeedingHandler:
                         total_calories = session["data"]["volume_ml"] * kcal_per_ml
                         
                         # Log calorie calculation
-                        self.app_logger.log_user_action(
+                        self.logger.info(f"User action:
                             user_id=user,
                             action='calorie_calculated',
                             success=True,
@@ -477,7 +477,7 @@ class FeedingHandler:
                                 'milk_type': jenis,
                                 'calories': total_calories
                             }
-                        )
+                        ")
                         
                         reply = (
                             f"Hasil Kalkulasi Kalori:\n\n"
@@ -586,7 +586,7 @@ class FeedingHandler:
                         total_ml = session["data"]["left_ml"] + session["data"]["right_ml"]
                         
                         # Log successful pumping
-                        self.app_logger.log_user_action(
+                        self.logger.info(f"User action:
                             user_id=user,
                             action='pumping_logged',
                             success=True,
@@ -596,7 +596,7 @@ class FeedingHandler:
                                 'right_ml': session["data"]["right_ml"],
                                 'bags': session["data"]["milk_bags"]
                             }
-                        )
+                        ")
                         
                         reply = (
                             f"✅ Catatan pumping tersimpan!\n\n"
@@ -615,12 +615,12 @@ class FeedingHandler:
                     reply = "❌ Masukkan angka bulat untuk jumlah kantong ASI"
                 except (ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='pumping_logged',
                         success=False,
                         details={'error': str(e)}
-                    )
+                    ")
                 except Exception as e:
                     error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_pumping'})
                     reply = f"❌ Terjadi kesalahan saat menyimpan data pumping. Kode error: {error_id}"
@@ -695,7 +695,7 @@ class FeedingHandler:
                         save_poop(user, session["data"])
                         
                         # Log successful poop entry
-                        self.app_logger.log_user_action(
+                        self.logger.info(f"User action:
                             user_id=user,
                             action='poop_logged',
                             success=True,
@@ -704,7 +704,7 @@ class FeedingHandler:
                                 'date': session["data"]["date"],
                                 'time': session["data"]["time"]
                             }
-                        )
+                        ")
                         
                         bristol_desc = {
                             1: "Sangat keras (konstipasi)",
@@ -734,12 +734,12 @@ class FeedingHandler:
                     reply = "❌ Masukkan angka 1-7 untuk skala Bristol."
                 except (ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.app_logger.log_user_action(
+                    self.logger.info(f"User action:
                         user_id=user,
                         action='poop_logged',
                         success=False,
                         details={'error': str(e)}
-                    )
+                    ")
                 except Exception as e:
                     error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_poop'})
                     reply = f"❌ Terjadi kesalahan saat menyimpan data BAB. Kode error: {error_id}"
@@ -1063,12 +1063,12 @@ class FeedingHandler:
         """Handle unknown feeding commands"""
         resp = MessagingResponse()
         
-        self.app_logger.log_user_action(
+        self.logger.info(f"User action:
             user_id=user,
             action='unknown_feeding_command',
             success=False,
             details={'message': message}
-        )
+        ")
         
         reply = (
             f"Perintah tidak dikenali dalam konteks makan/minum: '{message[:30]}...'\n\n"
