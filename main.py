@@ -191,7 +191,10 @@ async def initialize_handlers():
     except ImportError as e:
         logger.error(f"Handler import failed: {e}")
         create_fallback_handlers()
-
+    except Exception as e:  # Add this to catch other errors
+        logger.error(f"Handler initialization failed: {e}")
+        create_fallback_handlers()
+        
 def create_fallback_handlers():
     """Create minimal fallback handlers"""
     global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler
@@ -199,6 +202,28 @@ def create_fallback_handlers():
     class FallbackHandler:
         def __init__(self, name):
             self.name = name
+        
+        # Add all the expected method names    
+        def handle_feeding_commands(self, user, message):
+            return self.handle_commands(user, message)
+        
+        def handle_sleep_commands(self, user, message):
+            return self.handle_commands(user, message)
+            
+        def handle_reminder_commands(self, user, message, background_tasks=None):
+            return self.handle_commands(user, message)
+            
+        def handle_summary_commands(self, user, message):
+            return self.handle_commands(user, message)
+            
+        def handle_add_child(self, user, message):
+            return self.handle_commands(user, message)
+            
+        def handle_show_child(self, user):
+            return self.handle_commands(user, "")
+            
+        def handle_growth_tracking(self, user, message):
+            return self.handle_commands(user, message)
             
         def handle_commands(self, user, message):
             resp = MessagingResponse()
