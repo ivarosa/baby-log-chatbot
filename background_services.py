@@ -95,7 +95,7 @@ class ReminderScheduler:
             app_logger.log_error(e, context={'function': '_check_and_send_reminders'})
     
     def _process_reminder(self, reminder):
-    """Process a single reminder"""
+        """Process a single reminder"""
         database_url = os.environ.get('DATABASE_URL')
         user_col = DatabaseSecurity.get_user_column(database_url)
         reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
