@@ -4,6 +4,7 @@ Complete feeding operations handler - CORRECTED VERSION
 Handles MPASI, milk intake, pumping, calorie calculations, and health tracking
 """
 from datetime import datetime
+from fastapi import BackgroundTasks
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 from database.operations import (
