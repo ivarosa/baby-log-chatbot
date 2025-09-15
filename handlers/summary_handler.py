@@ -3,6 +3,7 @@ Complete Summary and reports handler
 Handles daily summaries, comprehensive reports, and analytics
 """
 from datetime import datetime, date, timedelta
+from fastapi import BackgroundTasks
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 from database.operations import (
