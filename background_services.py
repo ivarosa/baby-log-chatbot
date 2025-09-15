@@ -102,7 +102,7 @@ class ReminderScheduler:
         
         # Extract reminder data
         if database_url:
-        # PostgreSQL returns dict-like rows
+            # PostgreSQL returns dict-like rows
             user = reminder[user_col]
             reminder_id = reminder['id']
             reminder_name = reminder['reminder_name']
@@ -570,7 +570,6 @@ class HealthCheckService:
         """Check Twilio service connectivity"""
         try:
             # Simple connectivity check - don't send actual message
-            import os
             from twilio.rest import Client
             
             account_sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -590,7 +589,6 @@ class HealthCheckService:
     def _check_openai_connectivity(self) -> bool:
         """Check OpenAI service connectivity"""
         try:
-            import os
             import openai
             
             api_key = os.getenv("OPENAI_API_KEY")
