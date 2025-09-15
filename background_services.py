@@ -95,13 +95,14 @@ class ReminderScheduler:
             app_logger.log_error(e, context={'function': '_check_and_send_reminders'})
     
     def _process_reminder(self, reminder):
-        """Process a single reminder"""
+    """Process a single reminder"""
         database_url = os.environ.get('DATABASE_URL')
         user_col = DatabaseSecurity.get_user_column(database_url)
         reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
         
         # Extract reminder data
         if database_url:
+        # PostgreSQL returns dict-like rows
             user = reminder[user_col]
             reminder_id = reminder['id']
             reminder_name = reminder['reminder_name']
@@ -110,13 +111,15 @@ class ReminderScheduler:
             end_str = reminder['end_time']
             next_due = reminder['next_due']
         else:
-            user = reminder[1]
             reminder_id = reminder[0]
+            user = reminder[1]
             reminder_name = reminder[2]
             interval = reminder[3]
             start_str = reminder[4]
             end_str = reminder[5]
-            next_due = reminder[8]
+            # is_active = reminder[6]
+            # last_sent = reminder[7]
+            next_due = reminder[8] if len(reminder) > 8 else None
         
         # Check user's tier and message limits
         user_info = get_user_tier(user)
