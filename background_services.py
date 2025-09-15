@@ -458,10 +458,10 @@ class HealthCheckService:
             if not health_status['database']['healthy']:
                 critical_issues.append('Database connectivity issues')
             
-            if health_status['memory']['usage_percent'] > 90:
+            if 'usage_percent' in health_status['memory'] and health_status['memory']['usage_percent'] > 90:
                 critical_issues.append('High memory usage')
             
-            if health_status['disk']['usage_percent'] > 95:
+            if 'usage_percent' in health_status['disk'] and health_status['disk']['usage_percent'] > 95:
                 critical_issues.append('High disk usage')
             
             if critical_issues:
