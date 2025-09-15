@@ -99,12 +99,10 @@ class ReminderScheduler:
         database_url = os.environ.get('DATABASE_URL')
         user_col = DatabaseSecurity.get_user_column(database_url)
         reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
-        
         # Extract reminder data
-        if database_url:
-            # PostgreSQL returns dict-like rows
-            user = reminder[user_col]
+        if isinstance(reminder, dict):
             reminder_id = reminder['id']
+            user = reminder['user_id']  # Or whatever your column is
             reminder_name = reminder['reminder_name']
             interval = reminder['interval_hours']
             start_str = reminder['start_time']
@@ -117,8 +115,6 @@ class ReminderScheduler:
             interval = reminder[3]
             start_str = reminder[4]
             end_str = reminder[5]
-            # is_active = reminder[6]
-            # last_sent = reminder[7]
             next_due = reminder[8] if len(reminder) > 8 else None
         
         # Check user's tier and message limits
