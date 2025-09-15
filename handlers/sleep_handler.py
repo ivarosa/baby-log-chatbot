@@ -4,6 +4,7 @@ Sleep tracking handler
 Handles sleep session management, tracking, and reporting
 """
 from datetime import datetime, timedelta
+from fastapi import BackgroundTasks
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 from sleep_tracking import (
