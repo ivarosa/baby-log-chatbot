@@ -38,5 +38,22 @@ class SessionManager:
         return 0
 
     def get_stats(self):
-        # Not as straightforward with Redis; you can scan keys if needed
-        pass
+        # Scan all session keys and count them
+        try:
+            count = 0
+            cursor = 0
+            while True:
+                cursor, keys = self.redis.scan(cursor=cursor, match="session:*", count=100)
+                count += len(keys)
+                if cursor == 0:
+                    break
+            return {
+                "total_sessions": count,
+                "timeout_minutes": self.timeout_minutes
+            }
+        except Exception as e:
+            return {
+                "total_sessions": 0,
+                "timeout_minutes": self.timeout_minutes,
+                "error": str(e)
+            }
