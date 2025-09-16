@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timedelta
 
 class SessionManager:
-    def __init__(self, redis_url='redis://localhost:6379/0', timeout_minutes=30):
+    def __init__(self, redis_url='redis://default:HORYRILLVzeqwyFTqwCuoMBmupddFcdr@redis.railway.internal:6379', timeout_minutes=30):
         self.redis = redis.StrictRedis.from_url(redis_url, decode_responses=True)
         self.timeout_minutes = timeout_minutes
 
