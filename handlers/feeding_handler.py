@@ -224,7 +224,7 @@ class FeedingHandler:
                     session["data"]["time"] = time_input
                     session["state"] = "MILK_VOL"
                     reply = "Berapa ml yang diminum?"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_VOL":
                 is_valid, error_msg = InputValidator.validate_volume_ml(message)
@@ -234,7 +234,7 @@ class FeedingHandler:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "MILK_TYPE"
                     reply = "Susu apa yang diminum?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_TYPE":
                 milk_type = message.lower()
@@ -242,6 +242,7 @@ class FeedingHandler:
                     session["data"]["milk_type"] = "asi"
                     session["state"] = "ASI_METHOD"
                     reply = "ASI diberikan bagaimana?\n• 'dbf' untuk direct breastfeeding\n• 'pumping' untuk hasil perahan"
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 elif milk_type == "sufor":
                     session["data"]["milk_type"] = "sufor"
                     # Calculate calories automatically
@@ -253,12 +254,12 @@ class FeedingHandler:
                             f"✅ Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal\n\n"
                             f"Catatan tambahan? (atau ketik 'skip')"
                         )
+                        self.session_manager.update_session(user, state=session["state"], data=session["data"])
                     except Exception as e:
                         error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'get_calorie_setting'})
                         reply = f"❌ Gagal menghitung kalori. Kode error: {error_id}"
                 else:
                     reply = "❌ Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "ASI_METHOD":
                 method = message.lower()
@@ -266,9 +267,9 @@ class FeedingHandler:
                     session["data"]["asi_method"] = method
                     session["state"] = "MILK_NOTE"
                     reply = "Catatan tambahan? (atau ketik 'skip')"
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 else:
                     reply = "❌ Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_NOTE":
                 note_text = "" if message.lower() == "skip" else InputValidator.sanitize_text_input(message, 200)
