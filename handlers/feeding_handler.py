@@ -807,7 +807,7 @@ class FeedingHandler:
             return f"❌ Gagal mengambil ringkasan MPASI. Kode error: {error_id}"
 
     def _generate_milk_summary(self, user: str, date: str) -> str:
-        """Generate milk summary for given date"""
+        """Generate milk summary for given date, robust to missing keys."""
         try:
             rows = get_milk_intake_summary(user, date, date)
             if not rows:
@@ -816,17 +816,19 @@ class FeedingHandler:
             total_count = 0
             total_ml = 0
             total_cal = 0
-            
+
             for r in rows:
+                # r can be tuple/list or dict
                 if isinstance(r, (list, tuple)):
-                    total_count += r[2] or 0
-                    total_ml += r[3] or 0
-                    total_cal += r[4] or 0
+                    total_count += r[2] if len(r) > 2 and r[2] else 0
+                    total_ml += r[3] if len(r) > 3 and r[3] else 0
+                    total_cal += r[4] if len(r) > 4 and r[4] else 0
+                elif isinstance(r, dict):
+                    total_count += r.get("count", 0)
+                    total_ml += r.get("volume_ml", 0)
+                    total_cal += r.get("calories", 0)
                 else:
-                    values = list(r.values())
-                    total_count += values[2] if len(values) > 2 and values[2] is not None else 0
-                    total_ml += values[3] if len(values) > 3 and values[3] is not None else 0
-                    total_cal += values[4] if len(values) > 4 and values[4] is not None else 0
+                    continue
 
             reply = (
                 f"Ringkasan Susu/ASI ({date})\n\n"
@@ -838,20 +840,20 @@ class FeedingHandler:
 
             for r in rows:
                 if isinstance(r, (list, tuple)):
-                    milk_type, asi_method, count, volume, calories = r[0], r[1], r[2], r[3], r[4] or 0
+                    milk_type = r[0] if len(r) > 0 else "-"
+                    asi_method = r[1] if len(r) > 1 else ""
+                    count = r[2] if len(r) > 2 else 0
+                    volume = r[3] if len(r) > 3 else 0
+                    calories = r[4] if len(r) > 4 and r[4] else 0
+                elif isinstance(r, dict):
+                    milk_type = r.get("milk_type", "-")
+                    asi_method = r.get("asi_method", "")
+                    count = r.get("count", 0)
+                    volume = r.get("volume_ml", 0)
+                    calories = r.get("calories", 0)
                 else:
-                    values = list(r.values())
-                    milk_type = values[0] if len(values) > 0 else '-'
-                    asi_method = values[1] if len(values) > 1 else ""
-                    count = values[2] if len(values) > 2 else 0
-                    volume = values[3] if len(values) > 3 else 0
-                    calories = values[4] if len(values) > 4 else 0
-                    
-                if asi_method is None:
-                    asi_method = ""
-                if calories is None:
-                    calories = 0
-                    
+                    continue
+
                 if milk_type == 'asi':
                     method_text = f" ({asi_method})" if asi_method else ""
                     reply += f"• ASI{method_text}: {count}x, {volume} ml\n"
@@ -859,7 +861,6 @@ class FeedingHandler:
                     reply += f"• Sufor: {count}x, {volume} ml ({calories:.1f} kkal)\n"
 
             return reply
-            
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_milk_summary'})
             return f"❌ Gagal mengambil ringkasan susu. Kode error: {error_id}"
@@ -906,31 +907,30 @@ class FeedingHandler:
             return f"❌ Gagal mengambil ringkasan pumping. Kode error: {error_id}"
     
     def _generate_calorie_summary(self, user: str, date: str) -> str:
-        """Generate calorie summary from all sources"""
+        """Generate calorie summary from all sources, robust to missing keys."""
         try:
             # Get MPASI calories
             mpasi_rows = get_mpasi_summary(user, date, date)
-            mpasi_calories = sum([row[5] or 0 for row in mpasi_rows])
-            
+            mpasi_calories = sum([row[5] if len(row) > 5 and row[5] else 0 for row in mpasi_rows if isinstance(row, (list, tuple))])
+
             # Get milk calories
             milk_rows = get_milk_intake_summary(user, date, date)
             milk_calories = 0
             for r in milk_rows:
                 if isinstance(r, (list, tuple)):
-                    milk_calories += r[4] or 0
-                else:
-                    values = list(r.values())
-                    milk_calories += values[4] if len(values) > 4 and values[4] is not None else 0
-            
+                    milk_calories += r[4] if len(r) > 4 and r[4] else 0
+                elif isinstance(r, dict):
+                    milk_calories += r.get("calories", 0)
+
             total_calories = mpasi_calories + milk_calories
-            
+
             if total_calories == 0:
                 return f"Belum ada catatan kalori pada {date}.\n\nMulai dengan 'catat mpasi' atau 'catat susu'."
-            
+
             # Calculate percentages
             mpasi_percent = (mpasi_calories / total_calories * 100) if total_calories > 0 else 0
             milk_percent = (milk_calories / total_calories * 100) if total_calories > 0 else 0
-            
+
             return (
                 f"Ringkasan Kalori ({date})\n\n"
                 f"• Total kalori: {total_calories:.1f} kkal\n\n"
@@ -939,26 +939,25 @@ class FeedingHandler:
                 f"• Susu/ASI: {milk_calories:.1f} kkal ({milk_percent:.1f}%)\n\n"
                 f"Detail:\n"
                 f"• Sesi MPASI: {len(mpasi_rows)}\n"
-                f"• Sesi minum: {sum([r[2] or 0 for r in milk_rows])}\n\n"
+                f"• Sesi minum: {sum([r[2] if len(r) > 2 and r[2] else 0 for r in milk_rows if isinstance(r, (list, tuple))])}\n\n"
                 f"Ketik 'hitung kalori susu' untuk kalkulator kalori"
             )
-            
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_calorie_summary'})
             return f"❌ Gagal mengambil ringkasan kalori. Kode error: {error_id}"
     
     def _generate_feeding_overview(self, user: str, date: str) -> str:
-        """Generate comprehensive feeding overview"""
+        """Generate comprehensive feeding overview, robust to missing keys."""
         try:
             # Check if there's any feeding data for the date
             mpasi_rows = get_mpasi_summary(user, date, date)
             milk_rows = get_milk_intake_summary(user, date, date)
             pumping_rows = get_pumping_summary(user, date, date)
-            
+
             has_mpasi = bool(mpasi_rows)
             has_milk = bool(milk_rows)
             has_pumping = bool(pumping_rows)
-            
+
             if not any([has_mpasi, has_milk, has_pumping]):
                 return (
                     f"Ringkasan Makan & Minum ({date})\n\n"
@@ -968,39 +967,38 @@ class FeedingHandler:
                     f"• 'catat susu' untuk ASI/sufor\n"
                     f"• 'catat pumping' untuk ASI perah"
                 )
-            
-            # Generate quick overview
+
             overview_lines = [f"Ringkasan Makan & Minum ({date})\n"]
-            
+
             if has_mpasi:
                 mpasi_count = len(mpasi_rows)
-                mpasi_total_ml = sum([row[2] or 0 for row in mpasi_rows])
-                mpasi_total_cal = sum([row[5] or 0 for row in mpasi_rows])
+                mpasi_total_ml = sum([row[2] if len(row) > 2 and row[2] else 0 for row in mpasi_rows if isinstance(row, (list, tuple))])
+                mpasi_total_cal = sum([row[5] if len(row) > 5 and row[5] else 0 for row in mpasi_rows if isinstance(row, (list, tuple))])
                 overview_lines.append(f"• MPASI: {mpasi_count} sesi, {mpasi_total_ml}ml, {mpasi_total_cal} kkal")
-            
+
             if has_milk:
-                milk_count = sum([r[2] or 0 for r in milk_rows])
-                milk_total_ml = sum([r[3] or 0 for r in milk_rows])
-                milk_total_cal = sum([r[4] or 0 for r in milk_rows])
+                milk_count = sum([r[2] if len(r) > 2 and r[2] else 0 for r in milk_rows if isinstance(r, (list, tuple))])
+                milk_total_ml = sum([r[3] if len(r) > 3 and r[3] else 0 for r in milk_rows if isinstance(r, (list, tuple))])
+                milk_total_cal = sum([r[4] if len(r) > 4 and r[4] else 0 for r in milk_rows if isinstance(r, (list, tuple))])
                 overview_lines.append(f"• Susu/ASI: {milk_count} sesi, {milk_total_ml}ml, {milk_total_cal:.1f} kkal")
-            
+
             if has_pumping:
                 pumping_count = len(pumping_rows)
-                pumping_total_ml = sum([(row[2] or 0) + (row[3] or 0) for row in pumping_rows])
-                pumping_bags = sum([row[4] or 0 for row in pumping_rows])
+                pumping_total_ml = sum([(row[2] if len(row) > 2 and row[2] else 0) + (row[3] if len(row) > 3 and row[3] else 0) for row in pumping_rows if isinstance(row, (list, tuple))])
+                pumping_bags = sum([row[4] if len(row) > 4 and row[4] else 0 for row in pumping_rows if isinstance(row, (list, tuple))])
                 overview_lines.append(f"• Pumping: {pumping_count} sesi, {pumping_total_ml}ml, {pumping_bags} kantong")
-            
+
             overview_lines.extend([
                 "",
                 "Detail lebih lanjut:",
                 "• 'lihat ringkasan mpasi'",
-                "• 'lihat ringkasan susu'", 
+                "• 'lihat ringkasan susu'",
                 "• 'lihat ringkasan pumping'",
                 "• 'lihat ringkasan kalori'"
             ])
-            
+
             return "\n".join(overview_lines)
-            
+
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_feeding_overview'})
             return f"❌ Gagal mengambil ringkasan umum. Kode error: {error_id}"
