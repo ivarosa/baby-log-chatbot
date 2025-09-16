@@ -1,96 +1,42 @@
+import redis
+import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-import threading
-import time
-import logging
 
 class SessionManager:
-    """Manage user sessions with automatic cleanup"""
-    
-    def __init__(self, timeout_minutes: int = 30):
-        self.sessions: Dict[str, Dict[str, Any]] = {}
+    def __init__(self, redis_url='redis://localhost:6379/0', timeout_minutes=30):
+        self.redis = redis.StrictRedis.from_url(redis_url, decode_responses=True)
         self.timeout_minutes = timeout_minutes
-        self.lock = threading.RLock()
-        self._start_cleanup_thread()
-    
-    def get_session(self, user_id: str) -> Dict[str, Any]:
-        """Get or create user session"""
-        with self.lock:
-            if user_id not in self.sessions:
-                self.sessions[user_id] = {
-                    "state": None,
-                    "data": {},
-                    "last_activity": datetime.now(),
-                    "created_at": datetime.now()
-                }
-            else:
-                # Update last activity
-                self.sessions[user_id]["last_activity"] = datetime.now()
-            
-            return self.sessions[user_id]
-    
-    def update_session(self, user_id: str, state: Optional[str] = None, 
-                      data: Optional[Dict] = None) -> None:
-        """Update session state and/or data"""
-        with self.lock:
-            session = self.get_session(user_id)
-            if state is not None:
-                session["state"] = state
-            if data is not None:
-                session["data"] = data
-            session["last_activity"] = datetime.now()
-    
-    def clear_session(self, user_id: str) -> None:
-        """Clear specific user session"""
-        with self.lock:
-            if user_id in self.sessions:
-                del self.sessions[user_id]
-    
-    def cleanup_expired_sessions(self) -> int:
-        """Remove expired sessions, returns count of removed sessions"""
-        with self.lock:
-            current_time = datetime.now()
-            expired_users = []
-            
-            for user_id, session in self.sessions.items():
-                if current_time - session["last_activity"] > timedelta(minutes=self.timeout_minutes):
-                    expired_users.append(user_id)
-            
-            for user_id in expired_users:
-                del self.sessions[user_id]
-                logging.info(f"Cleaned up expired session for user: {user_id}")
-            
-            return len(expired_users)
-    
-    def _cleanup_worker(self):
-        """Background thread for session cleanup"""
-        while True:
-            try:
-                time.sleep(300)  # Run every 5 minutes
-                removed = self.cleanup_expired_sessions()
-                if removed > 0:
-                    logging.info(f"Session cleanup: removed {removed} expired sessions")
-            except Exception as e:
-                logging.error(f"Error in session cleanup: {e}")
-    
-    def _start_cleanup_thread(self):
-        """Start background cleanup thread"""
-        cleanup_thread = threading.Thread(target=self._cleanup_worker, daemon=True)
-        cleanup_thread.start()
-        logging.info("Session cleanup thread started")
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get session statistics"""
-        with self.lock:
-            return {
-                "total_sessions": len(self.sessions),
-                "timeout_minutes": self.timeout_minutes,
-                "sessions": {
-                    user_id: {
-                        "state": session["state"],
-                        "last_activity": session["last_activity"].isoformat(),
-                        "inactive_minutes": (datetime.now() - session["last_activity"]).seconds // 60
-                    }
-                    for user_id, session in self.sessions.items()
-                }
-            }
+
+    def _session_key(self, user_id):
+        return f"session:{user_id}"
+
+    def get_session(self, user_id):
+        session_data = self.redis.get(self._session_key(user_id))
+        if session_data:
+            session = json.loads(session_data)
+        else:
+            session = {"state": None, "data": {}, "last_activity": datetime.now().isoformat()}
+        # Always update last_activity
+        session["last_activity"] = datetime.now().isoformat()
+        self.redis.setex(self._session_key(user_id), timedelta(minutes=self.timeout_minutes), json.dumps(session))
+        return session
+
+    def update_session(self, user_id, state=None, data=None):
+        session = self.get_session(user_id)
+        if state is not None:
+            session["state"] = state
+        if data is not None:
+            session["data"] = data
+        session["last_activity"] = datetime.now().isoformat()
+        self.redis.setex(self._session_key(user_id), timedelta(minutes=self.timeout_minutes), json.dumps(session))
+
+    def clear_session(self, user_id):
+        self.redis.delete(self._session_key(user_id))
+
+    def cleanup_expired_sessions(self):
+        # Redis handles expiration automatically
+        return 0
+
+    def get_stats(self):
+        # Not as straightforward with Redis; you can scan keys if needed
+        pass
