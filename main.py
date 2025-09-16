@@ -307,9 +307,11 @@ async def health_check():
     # Check session manager
     try:
         stats = session_manager.get_stats()
+        if stats is None:
+            raise ValueError("Session stats unavailable (None)")
         health_status["sessions"] = {
-            "active": stats["total_sessions"],
-            "timeout_minutes": stats["timeout_minutes"]
+            "active": stats.get("total_sessions", 0),
+            "timeout_minutes": stats.get("timeout_minutes", None)
         }
     except Exception as e:
         health_status["sessions"] = f"error: {str(e)}"
@@ -332,7 +334,7 @@ async def health_check():
         status_code=status_code,
         media_type="application/json"
     )
-
+    
 # Main webhook endpoint with comprehensive error handling
 @app.post("/webhook")
 @rate_limit(max_calls=30, window_seconds=60)  # 30 requests per minute per IP
