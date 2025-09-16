@@ -20,7 +20,18 @@ class SummaryHandler:
     
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.logger = logger  # Use simple logger instead of app_logger
+        self.logger = logger
+        
+        # Create a mock app_logger to handle all the app_logger calls
+        class MockAppLogger:
+            def log_user_action(self, **kwargs):
+                logger.info(f"User action: {kwargs}")
+            
+            def log_error(self, error, **kwargs):
+                logger.error(f"Error: {error}, {kwargs}")
+                return f"ERROR_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        self.app_logger = MockAppLogger()
         
     def handle_summary_commands(self, user: str, message: str) -> Response:
         """Route summary commands to appropriate handlers"""
