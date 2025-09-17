@@ -289,13 +289,26 @@ class ReminderHandler:
                         end_time = r['end_time']
                         is_active = r['is_active']
                         next_due = r.get('next_due', 'Tidak diketahui')
-                    else:  # SQLite - assuming order: id, user, name, interval, start, end, active, last_sent, next_due
-                        name = r[2]
-                        interval = r[3]
-                        start_time = r[4]
-                        end_time = r[5]
-                        is_active = r[6]
-                        next_due = r[8] if len(r) > 8 else 'Tidak diketahui'
+                    else:  # SQLite - actual order: reminder_name, interval_hours, start_time, end_time, is_active, next_due
+                        # Check tuple length for defensive programming
+                        if len(r) < 6:
+                            error_id = self.app_logger.log_error(
+                                Exception(f"Incomplete reminder row: expected 6 fields, got {len(r)}"),
+                                user_id=user,
+                                context={
+                                    'function': 'handle_show_reminders',
+                                    'row_data': r,
+                                    'row_length': len(r)
+                                }
+                            )
+                            continue  # Skip processing this malformed row
+                        
+                        name = r[0]          # reminder_name
+                        interval = r[1]      # interval_hours
+                        start_time = r[2]    # start_time
+                        end_time = r[3]      # end_time
+                        is_active = r[4]     # is_active
+                        next_due = r[5] if len(r) > 5 else 'Tidak diketahui'  # next_due
                     
                     status = "🟢 Aktif" if is_active else "🔴 Nonaktif"
                     
