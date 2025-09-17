@@ -272,11 +272,16 @@ class FeedingHandler:
                     reply = "❌ Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
                 
             elif session["state"] == "MILK_NOTE":
+                # Check if the message is a summary request instead of a note
+                if message.lower().startswith("lihat ringkasan"):
+                    # Handle summary request instead of treating as note
+                    return self.handle_summary_requests(user, message)
+                
                 note_text = "" if message.lower() == "skip" else InputValidator.sanitize_text_input(message, 200)
                 session["data"]["note"] = note_text
                 
                 # Ensure sufor_calorie is set for sufor entries
-                if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
+                if session["data"].get("milk_type") == "sufor" and "sufor_calorie" not in session["data"]:
                     user_kcal = get_user_calorie_setting(user)
                     session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
                 
@@ -286,13 +291,14 @@ class FeedingHandler:
                     # Log successful milk intake
                     self.logger.info(f"User action: user_id={user}, action='milk_logged', success=True, "
                                    f"details={{'volume_ml': {session['data']['volume_ml']}, "
-                                   f"'milk_type': '{session['data']['milk_type']}', "
+                                   f"'milk_type': '{session['data'].get('milk_type', 'unknown')}', "
                                    f"'calories': {session['data'].get('sufor_calorie', 0)}}}")
                     
                     extra = ""
-                    if session["data"]["milk_type"] == "sufor":
-                        extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
-                    elif session["data"]["milk_type"] == "asi":
+                    milk_type = session["data"].get("milk_type", "unknown")
+                    if milk_type == "sufor":
+                        extra = f" (kalori: {session['data'].get('sufor_calorie', 0):.2f} kkal)"
+                    elif milk_type == "asi":
                         extra = f" ({session['data'].get('asi_method','')})"
                     
                     reply = (
@@ -300,7 +306,7 @@ class FeedingHandler:
                         f"Detail:\n"
                         f"• Jam: {session['data']['time']}\n"
                         f"• Volume: {session['data']['volume_ml']} ml\n"
-                        f"• Jenis: {session['data']['milk_type'].upper()}{extra}\n"
+                        f"• Jenis: {milk_type.upper()}{extra}\n"
                         f"• Catatan: {session['data']['note'] or '-'}\n\n"
                         f"Ketik 'lihat ringkasan susu' untuk melihat ringkasan harian."
                     )
