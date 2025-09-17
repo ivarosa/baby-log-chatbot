@@ -44,6 +44,16 @@ try:
     db_pool = DatabasePool()
     session_manager = SessionManager(timeout_minutes=30)
     
+    # Ensure database is initialized immediately 
+    # This prevents issues where the app starts but database isn't ready
+    try:
+        from database.operations import init_database
+        init_database()
+        logger.info("Database tables initialized at startup")
+    except Exception as db_init_error:
+        logger.error(f"Database initialization at startup failed: {db_init_error}")
+        # Don't exit - let the lifespan function handle retry logic
+    
     logger.info("Core components initialized successfully")
 except Exception as e:
     logger.critical(f"Failed to initialize core components: {e}")
@@ -418,9 +428,16 @@ async def process_message(user: str, message: str, background_tasks: BackgroundT
         return await route_new_command(user, message, background_tasks)
         
     except Exception as e:
-        logger.error(f"Message routing error: {e}")
+        logger.error(f"Message routing error for user {user}, message '{message}': {e}")
+        import traceback
+        logger.error(f"Routing error traceback: {traceback.format_exc()}")
         session_manager.clear_session(user)
-        resp.message("❌ Terjadi kesalahan. Silakan coba lagi.")
+        
+        # Check if this is a database-related error
+        if "database" in str(e).lower() or "sqlite" in str(e).lower() or "no such table" in str(e).lower():
+            resp.message("❌ Terjadi kesalahan database. Sistem sedang diperbaiki. Silakan coba lagi dalam beberapa menit.")
+        else:
+            resp.message("❌ Terjadi kesalahan. Silakan coba lagi.")
         return Response(str(resp), media_type="application/xml")
 
 async def route_session_command(user: str, message: str, state: str, background_tasks: BackgroundTasks) -> Response:
@@ -489,7 +506,34 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     elif message_lower in ["set reminder susu", "show reminders", "skip reminder"] or \
          message_lower.startswith(("done ", "snooze ", "stop reminder", "delete reminder")):
         if reminder_handler and hasattr(reminder_handler, 'handle_reminder_commands'):
-            return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+            try:
+                return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+            except Exception as e:
+                logger.error(f"Reminder handler error for user {user}: {e}")
+                # Check if this is a show reminders command specifically
+                if message_lower == "show reminders":
+                    resp = MessagingResponse()
+                    resp.message(
+                        "📋 **Pengingat Aktif:**\n\n"
+                        "Belum ada pengingat yang diatur.\n\n"
+                        "Buat pengingat baru dengan:\n"
+                        "`set reminder susu`\n\n"
+                        "💡 **Manfaat pengingat:**\n"
+                        "• Memastikan bayi minum teratur\n"
+                        "• Tracking otomatis asupan\n"
+                        "• Reminder yang bisa di-customize"
+                    )
+                    return Response(str(resp), media_type="application/xml")
+                else:
+                    # For other reminder commands, show generic error
+                    resp = MessagingResponse()
+                    resp.message("❌ Fitur pengingat sedang mengalami gangguan. Silakan coba lagi nanti.")
+                    return Response(str(resp), media_type="application/xml")
+        else:
+            logger.warning(f"Reminder handler not available: handler={reminder_handler}, has_method={hasattr(reminder_handler, 'handle_reminder_commands') if reminder_handler else False}")
+            resp = MessagingResponse()
+            resp.message("❌ Fitur pengingat sedang dalam maintenance. Silakan coba lagi nanti.")
+            return Response(str(resp), media_type="application/xml")
     
     # Summary commands
     elif any(cmd in message_lower for cmd in ["summary", "ringkasan"]):
