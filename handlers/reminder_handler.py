@@ -31,7 +31,9 @@ class ReminderHandler:
             
             def log_error(self, error, **kwargs):
                 logger.error(f"Error: {error}, {kwargs}")
-                return f"ERR_{id(error)}"  # Return a mock error ID
+                from datetime import datetime
+                error_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                return error_id
         
         self.app_logger = MockAppLogger()
     
