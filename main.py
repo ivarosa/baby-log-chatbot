@@ -408,6 +408,15 @@ async def process_message(user: str, message: str, background_tasks: BackgroundT
         resp.message(PANDUAN_MESSAGE)
         return Response(str(resp), media_type="application/xml")
     
+    # Override commands that should start new sessions even if there's an active session
+    override_commands = ["catat tidur", "catat susu", "catat mpasi", "catat pumping", "catat bab", 
+                         "tambah anak", "tampilkan anak", "catat timbang"]
+    
+    if message.lower() in override_commands:
+        session_manager.clear_session(user)
+        logger.info(f"Override command detected: '{message}' - cleared existing session")
+        return await route_new_command(user, message, background_tasks)
+    
     # Route to appropriate handler
     try:
         # Session-based routing

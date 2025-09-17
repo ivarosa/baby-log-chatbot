@@ -272,50 +272,60 @@ class FeedingHandler:
                     reply = "❌ Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
                 
             elif session["state"] == "MILK_NOTE":
-                note_text = "" if message.lower() == "skip" else InputValidator.sanitize_text_input(message, 200)
-                session["data"]["note"] = note_text
+                # Validate required session data before processing
+                required_fields = ["milk_type", "volume_ml", "date", "time"]
+                missing_fields = [field for field in required_fields if field not in session["data"]]
                 
-                # Ensure sufor_calorie is set for sufor entries
-                if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
-                    user_kcal = get_user_calorie_setting(user)
-                    session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
+                if missing_fields:
+                    # Session data is corrupted, clear and restart
+                    self.logger.warning(f"Invalid session data for MILK_NOTE state. Missing fields: {missing_fields}")
+                    self.session_manager.clear_session(user)
+                    reply = "❌ Sesi tidak valid. Silakan mulai catat susu dari awal dengan 'catat susu'."
+                else:
+                    note_text = "" if message.lower() == "skip" else InputValidator.sanitize_text_input(message, 200)
+                    session["data"]["note"] = note_text
+                    
+                    # Ensure sufor_calorie is set for sufor entries
+                    if session["data"]["milk_type"] == "sufor" and "sufor_calorie" not in session["data"]:
+                        user_kcal = get_user_calorie_setting(user)
+                        session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
                 
-                try:
-                    save_milk_intake(user, session["data"])
+                    try:
+                        save_milk_intake(user, session["data"])
+                        
+                        # Log successful milk intake
+                        self.logger.info(f"User action: user_id={user}, action='milk_logged', success=True, "
+                                       f"details={{'volume_ml': {session['data']['volume_ml']}, "
+                                       f"'milk_type': '{session['data']['milk_type']}', "
+                                       f"'calories': {session['data'].get('sufor_calorie', 0)}}}")
+                        
+                        extra = ""
+                        if session["data"]["milk_type"] == "sufor":
+                            extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
+                        elif session["data"]["milk_type"] == "asi":
+                            extra = f" ({session['data'].get('asi_method','')})"
+                        
+                        reply = (
+                            f"✅ Catatan minum susu tersimpan!\n\n"
+                            f"Detail:\n"
+                            f"• Jam: {session['data']['time']}\n"
+                            f"• Volume: {session['data']['volume_ml']} ml\n"
+                            f"• Jenis: {session['data']['milk_type'].upper()}{extra}\n"
+                            f"• Catatan: {session['data']['note'] or '-'}\n\n"
+                            f"Ketik 'lihat ringkasan susu' untuk melihat ringkasan harian."
+                        )
+                        session["state"] = None
+                        session["data"] = {}
+                        
+                    except (ValueError, ValidationError) as e:
+                        reply = f"❌ {str(e)}"
+                        self.logger.info(f"User action: user_id={user}, action='milk_logged', success=False, "
+                                       f"details={{'error': '{str(e)}'}}")
+                    except Exception as e:
+                        error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_milk_intake'})
+                        reply = f"❌ Terjadi kesalahan saat menyimpan data susu. Kode error: {error_id}"
                     
-                    # Log successful milk intake
-                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=True, "
-                                   f"details={{'volume_ml': {session['data']['volume_ml']}, "
-                                   f"'milk_type': '{session['data']['milk_type']}', "
-                                   f"'calories': {session['data'].get('sufor_calorie', 0)}}}")
-                    
-                    extra = ""
-                    if session["data"]["milk_type"] == "sufor":
-                        extra = f" (kalori: {session['data']['sufor_calorie']:.2f} kkal)"
-                    elif session["data"]["milk_type"] == "asi":
-                        extra = f" ({session['data'].get('asi_method','')})"
-                    
-                    reply = (
-                        f"✅ Catatan minum susu tersimpan!\n\n"
-                        f"Detail:\n"
-                        f"• Jam: {session['data']['time']}\n"
-                        f"• Volume: {session['data']['volume_ml']} ml\n"
-                        f"• Jenis: {session['data']['milk_type'].upper()}{extra}\n"
-                        f"• Catatan: {session['data']['note'] or '-'}\n\n"
-                        f"Ketik 'lihat ringkasan susu' untuk melihat ringkasan harian."
-                    )
-                    session["state"] = None
-                    session["data"] = {}
-                    
-                except (ValueError, ValidationError) as e:
-                    reply = f"❌ {str(e)}"
-                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=False, "
-                                   f"details={{'error': '{str(e)}'}}")
-                except Exception as e:
-                    error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_milk_intake'})
-                    reply = f"❌ Terjadi kesalahan saat menyimpan data susu. Kode error: {error_id}"
-                
-                self.session_manager.update_session(user, state=session["state"], data=session["data"])
+                    self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
             else:
                 reply = "Perintah tidak dikenali dalam konteks susu."
