@@ -474,7 +474,7 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     
     # Feeding commands
     elif message_lower in ["catat mpasi", "catat susu", "catat pumping", "hitung kalori susu", 
-                          "catat bab", "log poop"] or \
+                          "catat bab", "log poop", "lihat riwayat bab", "show poop log"] or \
          message_lower.startswith(("set kalori", "lihat kalori", "lihat ringkasan")):
         if feeding_handler and hasattr(feeding_handler, 'handle_feeding_commands'):
             return feeding_handler.handle_feeding_commands(user, message)
