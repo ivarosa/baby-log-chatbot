@@ -418,6 +418,23 @@ async def process_message(user: str, message: str, background_tasks: BackgroundT
         resp.message(PANDUAN_MESSAGE)
         return Response(str(resp), media_type="application/xml")
     
+    if message.lower() in ["status", "tier"]:
+        try:
+            from tier_management import format_tier_status_message
+            resp.message(format_tier_status_message(user))
+        except Exception as e:
+            logger.error(f"Error getting tier status for user {user}: {e}")
+            resp.message(
+                "🆓 **Status: Free User**\n\n"
+                "📊 Pengingat hari ini: 0/2\n"
+                "📅 Riwayat data: 7 hari terakhir\n"
+                "📈 Catatan pertumbuhan: 10 terakhir\n"
+                "⏰ Pengingat aktif: maksimal 3\n\n"
+                "💡 Upgrade ke premium untuk akses unlimited!\n\n"
+                "⚠️ Tidak dapat memuat data status lengkap."
+            )
+        return Response(str(resp), media_type="application/xml")
+    
     # Route to appropriate handler
     try:
         # Session-based routing
