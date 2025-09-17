@@ -44,9 +44,13 @@ class FeedingHandler:
         # DEBUG
         print(f"DEBUG: message='{message}', message.lower()='{message.lower()}', session_state='{session.get('state')}'")
         
+        # Summary commands - Check first to prevent conflicts with session states
+        if message.lower().startswith("lihat ringkasan"):
+            return self.handle_summary_requests(user, message)
+        
         # MPASI-related commands
-        if (message.lower() == "catat mpasi" or 
-            session["state"] and session["state"].startswith("MPASI")):
+        elif (message.lower() == "catat mpasi" or 
+              session["state"] and session["state"].startswith("MPASI")):
             return self.handle_mpasi_logging(user, message)
         
         # Milk intake commands
@@ -75,10 +79,6 @@ class FeedingHandler:
               message.lower() in ["show poop log", "lihat riwayat bab"] or
               session["state"] and session["state"].startswith("POOP")):
             return self.handle_health_tracking(user, message)
-        
-        # Summary commands
-        elif message.lower().startswith("lihat ringkasan"):
-            return self.handle_summary_requests(user, message)
         
         else:
             return self._handle_unknown_feeding_command(user, message)
