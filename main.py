@@ -521,7 +521,7 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     
     # Reminder commands
     elif message_lower in ["set reminder susu", "show reminders", "skip reminder"] or \
-         message_lower.startswith(("done ", "snooze ", "stop reminder", "delete reminder")):
+         message_lower.startswith(("done ", "snooze ", "henti reminder", "delete reminder")):
         if reminder_handler and hasattr(reminder_handler, 'handle_reminder_commands'):
             try:
                 return reminder_handler.handle_reminder_commands(user, message, background_tasks)

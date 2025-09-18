@@ -91,7 +91,7 @@ PANDUAN_MESSAGE = (
     "  • `done [volume]` - Catat volume (cth: done 120)\n"
     "  • `snooze [menit]` - Tunda (cth: snooze 15)\n"
     "  • `skip reminder` - Lewati sekali\n"
-    "• `stop reminder [nama]` - Nonaktifkan\n"
+    "• `henti reminder [nama]` - Nonaktifkan\n"
     "• `delete reminder [nama]` - Hapus permanent\n\n"
     "## **VII. Laporan & Analisis**\n"
     "• `ringkasan hari ini` - Summary aktivitas lengkap\n"
