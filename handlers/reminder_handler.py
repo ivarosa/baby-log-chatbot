@@ -9,7 +9,7 @@ from fastapi.responses import Response  # correct
 from twilio.twiml.messaging_response import MessagingResponse
 from database.operations import (
     save_reminder, get_user_reminders, save_milk_intake,
-    get_user_calorie_setting
+    get_user_calorie_setting, stop_reminder
 )
 from validators import InputValidator
 from error_handler import ValidationError
@@ -533,23 +533,39 @@ class ReminderHandler:
             
             reminder_name = parts[2].strip()
             
-            # This would require implementing stop_reminder function in database operations
-            # For now, just acknowledge the command
+            # Call the database function to actually stop the reminder
+            success = stop_reminder(user, reminder_name)
             
-            self.app_logger.log_user_action(
-                user_id=user,
-                action='reminder_stop_requested',
-                success=True,
-                details={'reminder_name': reminder_name}
-            )
-            
-            reply = (
-                f"✅ **Pengingat '{reminder_name}' dinonaktifkan**\n\n"
-                f"🔔 Pengingat tidak akan mengirim notifikasi lagi.\n\n"
-                f"💡 Untuk mengaktifkan kembali atau menghapus permanent:\n"
-                f"• Buat pengingat baru dengan `set reminder susu`\n"
-                f"• Atau hapus dengan `delete reminder {reminder_name}`"
-            )
+            if success:
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='reminder_stop_successful',
+                    success=True,
+                    details={'reminder_name': reminder_name}
+                )
+                
+                reply = (
+                    f"✅ **Pengingat '{reminder_name}' dinonaktifkan**\n\n"
+                    f"🔔 Pengingat tidak akan mengirim notifikasi lagi.\n\n"
+                    f"💡 Untuk mengaktifkan kembali atau menghapus permanent:\n"
+                    f"• Buat pengingat baru dengan `set reminder susu`\n"
+                    f"• Atau hapus dengan `delete reminder {reminder_name}`"
+                )
+            else:
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='reminder_stop_failed',
+                    success=False,
+                    details={'reminder_name': reminder_name}
+                )
+                
+                reply = (
+                    f"❌ **Tidak dapat menonaktifkan pengingat '{reminder_name}'**\n\n"
+                    f"Kemungkinan penyebab:\n"
+                    f"• Nama pengingat tidak ditemukan\n"
+                    f"• Pengingat sudah tidak aktif\n\n"
+                    f"Ketik `show reminders` untuk melihat daftar pengingat aktif."
+                )
             
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_stop_reminder'})
