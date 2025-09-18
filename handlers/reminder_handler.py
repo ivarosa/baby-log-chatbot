@@ -62,7 +62,7 @@ class ReminderHandler:
             return self.handle_reminder_skip(user)
         
         # Reminder management commands
-        elif message.lower().startswith("stop reminder"):
+        elif message.lower().startswith("henti reminder"):
             return self.handle_stop_reminder(user, message)
         
         elif message.lower().startswith("delete reminder"):
@@ -335,7 +335,7 @@ class ReminderHandler:
                 
                 reply += (
                     f"**Kelola pengingat:**\n"
-                    f"• `stop reminder [nama]` - Matikan\n"
+                    f"• `henti reminder [nama]` - Matikan\n"
                     f"• `delete reminder [nama]` - Hapus\n\n"
                     f"**Respons cepat saat pengingat:**\n"
                     f"• `done [volume]` - Catat volume\n"
@@ -522,10 +522,10 @@ class ReminderHandler:
             if len(parts) < 3:
                 reply = (
                     f"❌ **Format tidak lengkap**\n\n"
-                    f"Gunakan: `stop reminder [nama]`\n\n"
+                    f"Gunakan: `henti reminder [nama]`\n\n"
                     f"**Contoh:**\n"
-                    f"• `stop reminder Susu Pagi`\n"
-                    f"• `stop reminder Pengingat Utama`\n\n"
+                    f"• `henti reminder Susu Pagi`\n"
+                    f"• `henti reminder Pengingat Utama`\n\n"
                     f"Ketik `show reminders` untuk melihat nama pengingat yang ada."
                 )
                 resp.message(reply)
@@ -621,7 +621,7 @@ class ReminderHandler:
             f"**Setup & Kelola:**\n"
             f"• `set reminder susu` - Buat pengingat baru\n"
             f"• `show reminders` - Lihat semua pengingat\n"
-            f"• `stop reminder [nama]` - Nonaktifkan\n"
+            f"• `henti reminder [nama]` - Nonaktifkan\n"
             f"• `delete reminder [nama]` - Hapus permanent\n\n"
             f"**Respons Cepat:**\n"
             f"• `done [volume]` - Catat volume (contoh: done 120)\n"
