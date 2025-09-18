@@ -119,4 +119,45 @@ def test_handle_show_reminders_with_edge_case_tuple_lengths(reminder_handler):
         assert 'Setiap 3 jam' in response_body
         
         # Edge cases should be skipped gracefully
+
+
+def test_handle_henti_reminder_command(reminder_handler):
+    """Test that 'henti reminder' command is properly handled"""
+    # Mock the handle_reminder_commands method to test routing
+    with patch.object(reminder_handler, 'handle_stop_reminder') as mock_stop_reminder:
+        # Setup mock return value
+        from fastapi.responses import Response
+        from twilio.twiml.messaging_response import MessagingResponse
+        
+        mock_resp = MessagingResponse()
+        mock_resp.message("✅ Pengingat berhasil dihentikan")
+        mock_stop_reminder.return_value = Response(str(mock_resp), media_type="application/xml")
+        
+        # Test the command routing
+        from fastapi import BackgroundTasks
+        response = reminder_handler.handle_reminder_commands(
+            'whatsapp:+1234567890', 
+            'henti reminder Test Reminder', 
+            BackgroundTasks()
+        )
+        
+        # Verify that handle_stop_reminder was called
+        mock_stop_reminder.assert_called_once_with('whatsapp:+1234567890', 'henti reminder Test Reminder')
+        
+        # Verify response
+        assert response.status_code == 200
+
+
+def test_handle_henti_reminder_incomplete_format(reminder_handler):
+    """Test that 'henti reminder' with incomplete format shows proper error"""
+    # Test incomplete command
+    response = reminder_handler.handle_stop_reminder('whatsapp:+1234567890', 'henti reminder')
+    
+    # Verify response contains the correct format instruction
+    assert response.status_code == 200
+    response_body = response.body.decode('utf-8')
+    assert 'Format tidak lengkap' in response_body
+    assert 'Gunakan: `henti reminder [nama]`' in response_body
+    assert 'henti reminder Susu Pagi' in response_body
+    assert 'henti reminder Pengingat Utama' in response_body
         assert 'Only name' not in response_body
