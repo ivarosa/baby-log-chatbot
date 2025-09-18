@@ -817,12 +817,19 @@ def save_reminder(user: str, data: Dict[str, Any]) -> None:
     user_col = DatabaseSecurity.get_user_column(database_url)
     table_name = DatabaseSecurity.validate_table_name('milk_reminders')
     
-    # Calculate next due time
+    # Calculate next due time using timezone-aware datetime
     from datetime import datetime, timedelta
+    from timezone_handler import TimezoneHandler
+    
     start_hour, start_min = map(int, data['start_time'].split(':'))
-    next_due = datetime.now().replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
-    if next_due <= datetime.now():
-        next_due += timedelta(days=1)
+    # Get current time in user's timezone
+    current_local = TimezoneHandler.now_local(user)
+    next_due_local = current_local.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
+    if next_due_local <= current_local:
+        next_due_local += timedelta(days=1)
+    
+    # Convert to UTC for database storage (remove timezone info for compatibility)
+    next_due = TimezoneHandler.to_utc(next_due_local, user).replace(tzinfo=None)
     
     with db_pool.get_connection() as conn:
         c = conn.cursor()
@@ -865,6 +872,8 @@ def get_user_reminders(user: str) -> List[Tuple]:
 @ErrorHandler.handle_database_error
 def update_reminder_next_due(reminder_id: int, next_due: datetime) -> bool:
     """Update reminder next due time"""
+    from timezone_handler import TimezoneHandler
+    
     database_url = os.environ.get('DATABASE_URL')
     table_name = DatabaseSecurity.validate_table_name('milk_reminders')
     
@@ -875,13 +884,13 @@ def update_reminder_next_due(reminder_id: int, next_due: datetime) -> bool:
                 UPDATE {table_name} 
                 SET next_due=%s, last_sent=%s 
                 WHERE id=%s
-            ''', (next_due, datetime.now(), reminder_id))
+            ''', (next_due, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
         else:
             c.execute(f'''
                 UPDATE {table_name} 
                 SET next_due=?, last_sent=? 
                 WHERE id=?
-            ''', (next_due, datetime.now(), reminder_id))
+            ''', (next_due, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
         
         return c.rowcount > 0
 

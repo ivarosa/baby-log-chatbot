@@ -14,6 +14,7 @@ from database.operations import (
 from validators import InputValidator
 from error_handler import ValidationError
 from tier_management import get_tier_limits, increment_message_count
+from timezone_handler import TimezoneHandler
 import re
 import logging
 
@@ -178,10 +179,11 @@ class ReminderHandler:
                     session["data"]["end_time"] = message
                     session["state"] = "REMINDER_CONFIRM"
                     
-                    # Calculate first reminder time
+                    # Calculate first reminder time using user's timezone
                     start_hour, start_min = map(int, session["data"]["start_time"].split(':'))
-                    next_reminder = datetime.now().replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
-                    if next_reminder <= datetime.now():
+                    current_local = TimezoneHandler.now_local(user)
+                    next_reminder = current_local.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
+                    if next_reminder <= current_local:
                         next_reminder += timedelta(days=1)
                     
                     reply = (

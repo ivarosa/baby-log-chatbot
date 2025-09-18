@@ -14,6 +14,7 @@ from database_security import DatabaseSecurity
 from tier_management import get_user_tier, increment_message_count
 from send_twilio_message import send_twilio_message
 from utils.logging_config import get_app_logger
+from timezone_handler import TimezoneHandler
 
 app_logger = get_app_logger()
 
@@ -61,8 +62,8 @@ class ReminderScheduler:
             user_col = DatabaseSecurity.get_user_column(database_url)
             reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
             
-            # Get current time for comparison
-            now = datetime.now()
+            # Get current time for comparison - use UTC for database
+            now = TimezoneHandler.now_utc().replace(tzinfo=None)  # Remove timezone info for database compatibility
             
             with db_pool.get_connection() as conn:
                 c = conn.cursor()
@@ -115,14 +116,33 @@ class ReminderScheduler:
             interval = reminder[3]
             start_str = reminder[4]
             end_str = reminder[5]
+            last_sent = reminder[6] if len(reminder) > 6 else None
+            is_active = reminder[7] if len(reminder) > 7 else None
             next_due = reminder[8] if len(reminder) > 8 else None
         
         # Check user's tier and message limits
         user_info = get_user_tier(user)
         
-        # Check if within allowed time window
-        current_time = datetime.now()
-        if not self._time_in_range(start_str, end_str, current_time):
+        # Check if reminder was sent too recently (prevent duplicates)
+        current_time_utc = TimezoneHandler.now_utc().replace(tzinfo=None)
+        if last_sent:
+            try:
+                if isinstance(last_sent, str):
+                    last_sent_dt = datetime.fromisoformat(last_sent.replace('Z', '+00:00')).replace(tzinfo=None)
+                else:
+                    last_sent_dt = last_sent
+                
+                time_since_last = (current_time_utc - last_sent_dt).total_seconds()
+                # Don't send if less than 10 minutes since last send (prevent duplicates)
+                if time_since_last < 600:  # 10 minutes
+                    app_logger.app_logger.info(f"Skipping reminder {reminder_id} - sent {time_since_last:.0f}s ago")
+                    return
+            except Exception as e:
+                app_logger.log_error(e, context={'function': 'parse_last_sent', 'reminder_id': reminder_id})
+        
+        # Check if within allowed time window - use user's local time
+        current_time_local = TimezoneHandler.now_local(user)
+        if not self._time_in_range(start_str, end_str, current_time_local):
             send_this = False
             reason = "outside_time_window"
         elif user_info['tier'] == 'free' and user_info['messages_today'] >= 2:
@@ -156,7 +176,7 @@ class ReminderScheduler:
                     details={
                         'reminder_id': reminder_id,
                         'reminder_name': reminder_name,
-                        'time': current_time.strftime('%H:%M')
+                        'time': current_time_local.strftime('%H:%M')
                     }
                 )
                 # Increment message count after successful send
@@ -179,23 +199,26 @@ class ReminderScheduler:
                 details={
                     'reminder_id': reminder_id,
                     'reason': reason,
-                    'time': current_time.strftime('%H:%M')
+                    'time': current_time_local.strftime('%H:%M')
                 }
             )
         
-        # Calculate next reminder time
-        new_next_due = current_time + timedelta(hours=interval)
+        # Calculate next reminder time - use local time for calculations
+        new_next_due_local = current_time_local + timedelta(hours=interval)
         
         # Check if new time is outside allowed window
-        if not self._time_in_range(start_str, end_str, new_next_due):
+        if not self._time_in_range(start_str, end_str, new_next_due_local):
             # Move to next day's start time
-            next_start = (new_next_due + timedelta(days=1)).replace(
+            next_start_local = (new_next_due_local + timedelta(days=1)).replace(
                 hour=int(start_str[:2]), 
                 minute=int(start_str[3:5]), 
                 second=0, 
                 microsecond=0
             )
-            new_next_due = next_start
+            new_next_due_local = next_start_local
+        
+        # Convert to UTC for database storage
+        new_next_due_utc = TimezoneHandler.to_utc(new_next_due_local, user).replace(tzinfo=None)
         
         # Update reminder in database
         try:
@@ -206,13 +229,13 @@ class ReminderScheduler:
                         UPDATE {reminder_table} 
                         SET next_due=%s, last_sent=%s 
                         WHERE id=%s
-                    ''', (new_next_due, current_time, reminder_id))
+                    ''', (new_next_due_utc, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
                 else:
                     c.execute(f'''
                         UPDATE {reminder_table} 
                         SET next_due=?, last_sent=? 
                         WHERE id=?
-                    ''', (new_next_due, current_time, reminder_id))
+                    ''', (new_next_due_utc, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
                     
         except Exception as e:
             app_logger.log_error(e, context={'function': 'update_reminder', 'reminder_id': reminder_id})
