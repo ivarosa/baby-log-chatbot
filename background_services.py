@@ -9,6 +9,7 @@ import time
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import pytz
 from database.operations import db_pool
 from database_security import DatabaseSecurity
 from tier_management import get_user_tier, increment_message_count
@@ -16,6 +17,9 @@ from send_twilio_message import send_twilio_message
 from utils.logging_config import get_app_logger
 
 app_logger = get_app_logger()
+
+# Define Indonesia timezone
+WIB_TZ = pytz.timezone('Asia/Jakarta')
 
 class ReminderScheduler:
     """Background scheduler for reminder notifications"""
@@ -61,8 +65,9 @@ class ReminderScheduler:
             user_col = DatabaseSecurity.get_user_column(database_url)
             reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
             
-            # Get current time for comparison
-            now = datetime.now()
+            # Get current time in WIB (Indonesia timezone) and convert to UTC for database comparison
+            now_wib = datetime.now(WIB_TZ)
+            now_utc = now_wib.astimezone(pytz.UTC).replace(tzinfo=None)  # Remove tzinfo for DB storage
             
             with db_pool.get_connection() as conn:
                 c = conn.cursor()
@@ -73,13 +78,13 @@ class ReminderScheduler:
                         SELECT * FROM {reminder_table} 
                         WHERE is_active=TRUE AND next_due <= %s
                         ORDER BY next_due ASC
-                    ''', (now,))
+                    ''', (now_utc,))
                 else:
                     c.execute(f'''
                         SELECT * FROM {reminder_table} 
                         WHERE is_active=1 AND next_due <= ?
                         ORDER BY next_due ASC
-                    ''', (now,))
+                    ''', (now_utc,))
                 
                 due_reminders = c.fetchall()
             
@@ -117,11 +122,44 @@ class ReminderScheduler:
             end_str = reminder[5]
             next_due = reminder[8] if len(reminder) > 8 else None
         
+        # Get current time in WIB (Indonesia timezone)
+        current_time = datetime.now(WIB_TZ)
+        current_time_utc = current_time.astimezone(pytz.UTC).replace(tzinfo=None)
+        
+        # Check for duplicate processing - prevent processing same reminder within 5 minutes
+        try:
+            with db_pool.get_connection() as conn:
+                c = conn.cursor()
+                if database_url:
+                    c.execute(f'''
+                        SELECT last_sent FROM {reminder_table} 
+                        WHERE id=%s
+                    ''', (reminder_id,))
+                else:
+                    c.execute(f'''
+                        SELECT last_sent FROM {reminder_table} 
+                        WHERE id=?
+                    ''', (reminder_id,))
+                
+                result = c.fetchone()
+                if result and result[0]:
+                    last_sent = result[0]
+                    if isinstance(last_sent, str):
+                        last_sent = datetime.fromisoformat(last_sent.replace('Z', '+00:00'))
+                        last_sent = last_sent.replace(tzinfo=None)
+                    
+                    # If we processed this reminder within the last 5 minutes, skip it
+                    if last_sent and (current_time_utc - last_sent) < timedelta(minutes=5):
+                        app_logger.app_logger.info(f"Skipped duplicate processing of reminder {reminder_id} (last sent: {last_sent})")
+                        return
+        except Exception as e:
+            app_logger.log_error(e, context={'function': 'check_duplicate_reminder', 'reminder_id': reminder_id})
+            # Continue processing if we can't check for duplicates
+        
         # Check user's tier and message limits
         user_info = get_user_tier(user)
         
         # Check if within allowed time window
-        current_time = datetime.now()
         if not self._time_in_range(start_str, end_str, current_time):
             send_this = False
             reason = "outside_time_window"
@@ -183,19 +221,23 @@ class ReminderScheduler:
                 }
             )
         
-        # Calculate next reminder time
-        new_next_due = current_time + timedelta(hours=interval)
+        # Calculate next reminder time in WIB timezone
+        new_next_due_wib = current_time + timedelta(hours=interval)
         
-        # Check if new time is outside allowed window
-        if not self._time_in_range(start_str, end_str, new_next_due):
-            # Move to next day's start time
-            next_start = (new_next_due + timedelta(days=1)).replace(
+        # Check if new time is outside allowed window (using WIB time)
+        if not self._time_in_range(start_str, end_str, new_next_due_wib):
+            # Move to next day's start time in WIB
+            next_start_wib = (new_next_due_wib + timedelta(days=1)).replace(
                 hour=int(start_str[:2]), 
                 minute=int(start_str[3:5]), 
                 second=0, 
                 microsecond=0
             )
-            new_next_due = next_start
+            new_next_due_wib = next_start_wib
+        
+        # Convert to UTC for database storage
+        new_next_due_utc = new_next_due_wib.astimezone(pytz.UTC).replace(tzinfo=None)
+        current_time_utc = current_time.astimezone(pytz.UTC).replace(tzinfo=None)
         
         # Update reminder in database
         try:
@@ -206,13 +248,13 @@ class ReminderScheduler:
                         UPDATE {reminder_table} 
                         SET next_due=%s, last_sent=%s 
                         WHERE id=%s
-                    ''', (new_next_due, current_time, reminder_id))
+                    ''', (new_next_due_utc, current_time_utc, reminder_id))
                 else:
                     c.execute(f'''
                         UPDATE {reminder_table} 
                         SET next_due=?, last_sent=? 
                         WHERE id=?
-                    ''', (new_next_due, current_time, reminder_id))
+                    ''', (new_next_due_utc, current_time_utc, reminder_id))
                     
         except Exception as e:
             app_logger.log_error(e, context={'function': 'update_reminder', 'reminder_id': reminder_id})
@@ -223,14 +265,22 @@ class ReminderScheduler:
             start_hour, start_minute = map(int, start_str.split(":"))
             end_hour, end_minute = map(int, end_str.split(":"))
             
+            # Ensure we're working with timezone-aware datetime
+            if check_time.tzinfo is None:
+                check_time = WIB_TZ.localize(check_time)
+            elif check_time.tzinfo != WIB_TZ:
+                check_time = check_time.astimezone(WIB_TZ)
+            
+            # Create start and end times for the same date as check_time
             start_time = check_time.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
             end_time = check_time.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
             
             if start_time <= end_time:
-                # Same day range
+                # Same day range (e.g., 08:00 to 18:00)
                 return start_time <= check_time <= end_time
             else:
-                # Over midnight range
+                # Over midnight range (e.g., 20:00 to 06:00)
+                # Check if time is after start_time on same day OR before end_time on same day
                 return check_time >= start_time or check_time <= end_time
                 
         except Exception as e:
