@@ -26,6 +26,8 @@ class ChildHandler:
         session = self.session_manager.get_session(user)
         resp = MessagingResponse()
         
+        # Always check for "tambah anak" command first, regardless of current state
+        # This handles the case where user types "tambah anak" while in the middle of the flow
         if message.lower() == "tambah anak":
             session["state"] = "ADDCHILD_NAME"
             session["data"] = {}
