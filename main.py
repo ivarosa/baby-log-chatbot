@@ -464,10 +464,16 @@ async def process_message(user: str, message: str, background_tasks: BackgroundT
 async def route_session_command(user: str, message: str, state: str, background_tasks: BackgroundTasks) -> Response:
     """Route commands based on session state"""
     
-    # Child/growth commands
-    if state.startswith(("ADDCHILD", "TIMBANG")):
+    # Child add commands
+    if state.startswith("ADDCHILD"):
         if hasattr(child_handler, 'handle_add_child'):
             return child_handler.handle_add_child(user, message)
+        return child_handler.handle_commands(user, message)
+    
+    # Growth tracking commands
+    elif state.startswith("TIMBANG"):
+        if hasattr(child_handler, 'handle_growth_tracking'):
+            return child_handler.handle_growth_tracking(user, message)
         return child_handler.handle_commands(user, message)
     
     # Feeding commands
