@@ -1,0 +1,6 @@
+# Example .gitignore additions for the static directory
+# Ignore chart files but keep the directory
+static/*.png
+static/*.jpg
+static/*.gif
+!static/.gitkeep

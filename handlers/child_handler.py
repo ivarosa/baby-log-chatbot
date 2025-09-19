@@ -6,7 +6,9 @@ from twilio.twiml.messaging_response import MessagingResponse
 from database.operations import save_child, get_child, save_timbang, get_timbang_history
 from validators import InputValidator
 from error_handler import ValidationError
+from tier_management import can_access_feature
 import logging
+import os
 
 class ChildHandler:
     """Handle child-related operations"""
@@ -14,6 +16,10 @@ class ChildHandler:
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
         self.logger = logger  # Use simple logger instead of app_logger
+    
+    def is_premium(self, user: str) -> bool:
+        """Check if user has premium access - wrapper for can_access_feature"""
+        return can_access_feature(user, "advanced_charts")
     
     def handle_add_child(self, user: str, message: str) -> Response:
         """Handle 'tambah anak' command"""
@@ -185,6 +191,64 @@ class ChildHandler:
                 reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
+        elif message.lower().startswith("lihat grafik tumbuh kembang"):
+            # Premium growth chart feature
+            try:
+                if not self.is_premium(user):
+                    reply = ("📈 **Grafik Tumbuh Kembang** adalah fitur premium.\n\n"
+                            "✨ Dengan upgrade ke premium, Anda dapat:\n"
+                            "• Melihat grafik pertumbuhan visual\n"
+                            "• Download chart dalam format PNG\n"
+                            "• Analisis tren pertumbuhan\n\n"
+                            "💎 Upgrade ke premium untuk akses unlimited!")
+                else:
+                    # Fetch all growth records for premium users (no limit)
+                    records = get_timbang_history(user, limit=None)
+                    child_info = get_child(user)
+                    
+                    if not records:
+                        reply = ("📊 Belum ada data pertumbuhan untuk membuat grafik.\n"
+                               "Ketik 'catat timbang' untuk menambah data terlebih dahulu.")
+                    elif not child_info:
+                        reply = ("👶 Data anak belum tersedia.\n"
+                               "Ketik 'tambah anak' untuk menambah data anak terlebih dahulu.")
+                    else:
+                        # Import and use PremiumChartGenerator
+                        from utils.premium_growth_charts import PremiumChartGenerator
+                        
+                        # Convert tuple data to dict format required by chart generator
+                        growth_data, child_data = PremiumChartGenerator.convert_tuple_to_dict(records, child_info)
+                        
+                        # Generate chart filename
+                        chart_filename = f"growth_chart_{user}.png"
+                        chart_path = os.path.join("static", chart_filename)
+                        
+                        # Generate the chart
+                        if PremiumChartGenerator.generate_weight_chart(growth_data, child_data, chart_path):
+                            # Get BASE_URL from environment or use default
+                            base_url = os.getenv("BASE_URL", "http://localhost:8000")
+                            chart_url = f"{base_url}/static/{chart_filename}"
+                            
+                            reply = (f"📈 **Grafik Pertumbuhan {child_data.get('name', 'Anak')}**\n\n"
+                                   f"✅ Grafik berhasil dibuat!\n"
+                                   f"📊 Data: {len(growth_data)} catatan pertumbuhan\n\n"
+                                   f"🔗 **Download:** {chart_url}\n\n"
+                                   f"💡 Klik link di atas untuk melihat dan download grafik pertumbuhan.")
+                            
+                            # Try to send chart as WhatsApp media if possible
+                            try:
+                                resp.message().media(chart_url)
+                                return Response(str(resp), media_type="application/xml")
+                            except Exception as e:
+                                logging.warning(f"Could not send chart as media: {e}")
+                                # Fall back to text message with download link
+                        else:
+                            reply = ("❌ Terjadi kesalahan saat membuat grafik.\n"
+                                   "Silakan coba lagi atau hubungi support.")
+            except Exception as e:
+                logging.error(f"Error generating premium growth chart: {e}")
+                reply = "❌ Terjadi kesalahan saat membuat grafik pertumbuhan."
+            
         elif message.lower().startswith("lihat tumbuh kembang"):
             try:
                 records = get_timbang_history(user)
@@ -195,6 +259,12 @@ class ChildHandler:
                     
                     if len(records) > 5:
                         reply += f"\n... dan {len(records) - 5} catatan lainnya"
+                    
+                    # Add premium chart suggestion
+                    if self.is_premium(user):
+                        reply += f"\n\n💎 Ketik 'lihat grafik tumbuh kembang' untuk melihat grafik visual!"
+                    else:
+                        reply += f"\n\n✨ Upgrade ke premium untuk grafik pertumbuhan visual!"
                 else:
                     reply = "Belum ada catatan timbang. Ketik 'catat timbang' untuk menambah data."
             except Exception as e:
