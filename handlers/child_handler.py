@@ -27,7 +27,7 @@ class ChildHandler:
         resp = MessagingResponse()
         
         # Always check for "tambah anak" command first, regardless of current state
-        # This handles the case where user types "tambah anak" while in the middle of the flow
+        # This prevents float conversion errors when users type "tambah anak" from any state
         if message.lower() == "tambah anak":
             session["state"] = "ADDCHILD_NAME"
             session["data"] = {}
@@ -65,6 +65,7 @@ class ChildHandler:
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         elif session["state"] == "ADDCHILD_HEIGHT":
+            # Validate input before attempting float conversion to prevent ValueError
             is_valid, error_msg = InputValidator.validate_height_cm(message)
             if not is_valid:
                 reply = f"❌ {error_msg}"
@@ -75,8 +76,9 @@ class ChildHandler:
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         elif session["state"] == "ADDCHILD_WEIGHT":
+            # Check if input is numeric before attempting float conversion
             try:
-                weight = float(message)
+                weight = float(message.replace(',', '.'))  # Allow comma as decimal separator
                 weight_kg = weight / 1000 if weight > 100 else weight
                 
                 is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
@@ -146,6 +148,16 @@ class ChildHandler:
         """Handle growth tracking operations"""
         session = self.session_manager.get_session(user)
         resp = MessagingResponse()
+        
+        # Always check for "tambah anak" command first, regardless of current state
+        # This prevents float conversion errors when users type "tambah anak" from any growth tracking state
+        if message.lower() == "tambah anak":
+            session["state"] = "ADDCHILD_NAME"
+            session["data"] = {}
+            reply = "Siapa nama anak Anda?"
+            self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            resp.message(reply)
+            return Response(str(resp), media_type="application/xml")
         
         # Check for view commands first, regardless of session state
         if message.lower().startswith("lihat grafik tumbuh kembang"):
@@ -235,6 +247,7 @@ class ChildHandler:
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         elif session["state"] == "TIMBANG_HEIGHT":
+            # Validate input before attempting float conversion to prevent ValueError
             is_valid, error_msg = InputValidator.validate_height_cm(message)
             if not is_valid:
                 reply = f"❌ {error_msg}"
@@ -245,8 +258,9 @@ class ChildHandler:
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         elif session["state"] == "TIMBANG_WEIGHT":
+            # Check if input is numeric before attempting float conversion
             try:
-                weight = float(message)
+                weight = float(message.replace(',', '.'))  # Allow comma as decimal separator
                 weight_kg = weight / 1000 if weight > 100 else weight
                 
                 is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
@@ -261,13 +275,16 @@ class ChildHandler:
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         elif session["state"] == "TIMBANG_HEAD":
+            # Check if input is numeric before attempting float conversion
             try:
-                session["data"]["head_circum_cm"] = float(message)
+                session["data"]["head_circum_cm"] = float(message.replace(',', '.'))  # Allow comma as decimal separator
                 save_timbang(user, session["data"])
                 reply = "✅ Data timbang tersimpan! Ketik 'lihat tumbuh kembang' untuk melihat riwayat."
                 session["state"] = None
                 session["data"] = {}
-            except (ValueError, ValidationError) as e:
+            except ValueError:
+                reply = "❌ Masukkan angka yang valid untuk lingkar kepala (cm)"
+            except (ValidationError) as e:
                 reply = f"❌ {str(e)}"
             except Exception as e:
                 logging.error(f"Error saving timbang: {e}")
