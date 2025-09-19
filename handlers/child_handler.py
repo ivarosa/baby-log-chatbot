@@ -145,53 +145,8 @@ class ChildHandler:
         session = self.session_manager.get_session(user)
         resp = MessagingResponse()
         
-        if message.lower() == "catat timbang":
-            session["state"] = "TIMBANG_HEIGHT"
-            session["data"] = {"date": datetime.now().strftime("%Y-%m-%d")}
-            reply = "Tinggi badan (cm)?"
-            self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-        elif session["state"] == "TIMBANG_HEIGHT":
-            is_valid, error_msg = InputValidator.validate_height_cm(message)
-            if not is_valid:
-                reply = f"❌ {error_msg}"
-            else:
-                session["data"]["height_cm"] = float(message)
-                session["state"] = "TIMBANG_WEIGHT"
-                reply = "Berat badan? (kg)"
-            self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-        elif session["state"] == "TIMBANG_WEIGHT":
-            try:
-                weight = float(message)
-                weight_kg = weight / 1000 if weight > 100 else weight
-                
-                is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
-                if not is_valid:
-                    reply = f"❌ {error_msg}"
-                else:
-                    session["data"]["weight_kg"] = weight_kg
-                    session["state"] = "TIMBANG_HEAD"
-                    reply = "Lingkar kepala (cm)?"
-            except ValueError:
-                reply = "❌ Masukkan angka yang valid untuk berat badan"
-            self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-        elif session["state"] == "TIMBANG_HEAD":
-            try:
-                session["data"]["head_circum_cm"] = float(message)
-                save_timbang(user, session["data"])
-                reply = "✅ Data timbang tersimpan! Ketik 'lihat tumbuh kembang' untuk melihat riwayat."
-                session["state"] = None
-                session["data"] = {}
-            except (ValueError, ValidationError) as e:
-                reply = f"❌ {str(e)}"
-            except Exception as e:
-                logging.error(f"Error saving timbang: {e}")
-                reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
-            self.session_manager.update_session(user, state=session["state"], data=session["data"])
-            
-        elif message.lower().startswith("lihat grafik tumbuh kembang"):
+        # Check for view commands first, regardless of session state
+        if message.lower().startswith("lihat grafik tumbuh kembang"):
             # Premium growth chart feature
             try:
                 if not self.is_premium(user):
@@ -270,6 +225,52 @@ class ChildHandler:
             except Exception as e:
                 logging.error(f"Error getting growth history: {e}")
                 reply = "❌ Terjadi kesalahan saat mengambil riwayat tumbang."
+        
+        elif message.lower() == "catat timbang":
+            session["state"] = "TIMBANG_HEIGHT"
+            session["data"] = {"date": datetime.now().strftime("%Y-%m-%d")}
+            reply = "Tinggi badan (cm)?"
+            self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            
+        elif session["state"] == "TIMBANG_HEIGHT":
+            is_valid, error_msg = InputValidator.validate_height_cm(message)
+            if not is_valid:
+                reply = f"❌ {error_msg}"
+            else:
+                session["data"]["height_cm"] = float(message)
+                session["state"] = "TIMBANG_WEIGHT"
+                reply = "Berat badan? (kg)"
+            self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            
+        elif session["state"] == "TIMBANG_WEIGHT":
+            try:
+                weight = float(message)
+                weight_kg = weight / 1000 if weight > 100 else weight
+                
+                is_valid, error_msg = InputValidator.validate_weight_kg(str(weight_kg))
+                if not is_valid:
+                    reply = f"❌ {error_msg}"
+                else:
+                    session["data"]["weight_kg"] = weight_kg
+                    session["state"] = "TIMBANG_HEAD"
+                    reply = "Lingkar kepala (cm)?"
+            except ValueError:
+                reply = "❌ Masukkan angka yang valid untuk berat badan"
+            self.session_manager.update_session(user, state=session["state"], data=session["data"])
+            
+        elif session["state"] == "TIMBANG_HEAD":
+            try:
+                session["data"]["head_circum_cm"] = float(message)
+                save_timbang(user, session["data"])
+                reply = "✅ Data timbang tersimpan! Ketik 'lihat tumbuh kembang' untuk melihat riwayat."
+                session["state"] = None
+                session["data"] = {}
+            except (ValueError, ValidationError) as e:
+                reply = f"❌ {str(e)}"
+            except Exception as e:
+                logging.error(f"Error saving timbang: {e}")
+                reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
+            self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         else:
             reply = "Perintah tidak dikenali dalam konteks tumbuh kembang."
