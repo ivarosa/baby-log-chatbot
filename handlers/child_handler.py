@@ -98,11 +98,14 @@ class ChildHandler:
                 try:
                     save_child(user, session["data"])
                     reply = "✅ Data anak tersimpan! Untuk melihat data anak, ketik: tampilkan anak"
-                    session["state"] = None
-                    session["data"] = {}
                 except Exception as e:
                     logging.error(f"Error saving child: {e}")
                     reply = "❌ Terjadi kesalahan saat menyimpan data anak."
+                finally:
+                    # Always clear session state after confirmation, whether save succeeded or failed
+                    # This prevents the user from being stuck in confirmation state after errors
+                    session["state"] = None
+                    session["data"] = {}
             elif message.lower() == "ulang":
                 session["state"] = "ADDCHILD_NAME"
                 reply = "Siapa nama anak Anda? (Ulangi input)"
@@ -280,8 +283,6 @@ class ChildHandler:
                 session["data"]["head_circum_cm"] = float(message.replace(',', '.'))  # Allow comma as decimal separator
                 save_timbang(user, session["data"])
                 reply = "✅ Data timbang tersimpan! Ketik 'lihat tumbuh kembang' untuk melihat riwayat."
-                session["state"] = None
-                session["data"] = {}
             except ValueError:
                 reply = "❌ Masukkan angka yang valid untuk lingkar kepala (cm)"
             except (ValidationError) as e:
@@ -289,6 +290,11 @@ class ChildHandler:
             except Exception as e:
                 logging.error(f"Error saving timbang: {e}")
                 reply = "❌ Terjadi kesalahan saat menyimpan data timbang."
+            finally:
+                # Always clear session state after attempting to save growth data
+                # This prevents the user from being stuck in data entry state after errors
+                session["state"] = None
+                session["data"] = {}
             self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
         else:
