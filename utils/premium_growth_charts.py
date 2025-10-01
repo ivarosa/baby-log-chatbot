@@ -89,7 +89,7 @@ class PremiumChartGenerator:
             
             # Format x-axis for weight chart
             ax1.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
-            ax1.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+            ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
             plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45)
             
             # Plot height chart
@@ -103,7 +103,7 @@ class PremiumChartGenerator:
             
             # Format x-axis for height chart
             ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
-            ax2.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
+            ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
             plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
             
             # Add child info text
