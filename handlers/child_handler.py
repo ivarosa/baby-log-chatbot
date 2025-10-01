@@ -271,7 +271,9 @@ class ChildHandler:
                         else:
                             from utils.premium_growth_charts import PremiumChartGenerator
                             growth_data, child_data = PremiumChartGenerator.convert_tuple_to_dict(records, child_info)
-                            chart_filename = f"growth_chart_{user}.png"
+                            # Sanitize user identifier for filename (remove special characters like ':')
+                            safe_user = user.replace(':', '_').replace('+', '')
+                            chart_filename = f"growth_chart_{safe_user}.png"
                             chart_path = os.path.join("static", chart_filename)
                             # Generate the chart
                             if PremiumChartGenerator.generate_weight_chart(growth_data, child_data, chart_path):
