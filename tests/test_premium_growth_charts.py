@@ -155,3 +155,51 @@ def test_chart_modules_availability():
     if MATPLOTLIB_AVAILABLE:
         assert PremiumChartGenerator is not None
     # This test just validates the import logic works
+
+
+def test_filename_sanitization_for_whatsapp_users():
+    """
+    Test that WhatsApp user identifiers are properly sanitized for filenames.
+    This prevents URL issues when generating growth chart links.
+    
+    Issue: WhatsApp user identifiers like 'whatsapp:+6285261264323' contain
+    special characters (: and +) that break URLs when used directly in filenames.
+    """
+    # Simulate the user identifier from WhatsApp
+    user = "whatsapp:+6285261264323"
+    
+    # Apply the sanitization as done in child_handler.py
+    safe_user = user.replace(':', '_').replace('+', '')
+    chart_filename = f"growth_chart_{safe_user}.png"
+    
+    # Verify the filename doesn't contain problematic characters
+    assert ':' not in chart_filename, "Colon should be removed from filename"
+    assert '+' not in chart_filename, "Plus sign should be removed from filename"
+    
+    # Verify expected format
+    expected = "growth_chart_whatsapp_6285261264323.png"
+    assert chart_filename == expected, f"Expected {expected}, got {chart_filename}"
+    
+    # Verify the filename can be used in a URL without issues
+    base_url = "http://localhost:8000"
+    chart_url = f"{base_url}/static/{chart_filename}"
+    expected_url = "http://localhost:8000/static/growth_chart_whatsapp_6285261264323.png"
+    assert chart_url == expected_url, f"Expected {expected_url}, got {chart_url}"
+    
+    # Verify no problematic 'whatsapp:' pattern in URL
+    assert 'whatsapp:' not in chart_url, "Original 'whatsapp:' identifier should not be in URL"
+
+
+def test_filename_sanitization_multiple_formats():
+    """Test sanitization works for various user identifier formats"""
+    test_cases = [
+        ("whatsapp:+6281234567890", "growth_chart_whatsapp_6281234567890.png"),
+        ("whatsapp:+1234567890", "growth_chart_whatsapp_1234567890.png"),
+        ("telegram:+9876543210", "growth_chart_telegram_9876543210.png"),
+        ("user:test@example.com", "growth_chart_user_test@example.com.png"),  # @ is safe in URLs
+    ]
+    
+    for user, expected_filename in test_cases:
+        safe_user = user.replace(':', '_').replace('+', '')
+        chart_filename = f"growth_chart_{safe_user}.png"
+        assert chart_filename == expected_filename, f"For user {user}, expected {expected_filename}, got {chart_filename}"
