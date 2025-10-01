@@ -507,7 +507,7 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     
     # Child commands
     if message_lower in ["tambah anak", "tampilkan anak", "catat timbang"] or \
-       message_lower.startswith("lihat tumbuh kembang"):
+       message_lower.startswith(("lihat tumbuh kembang", "lihat grafik tumbuh kembang")):
         if child_handler:
             if message_lower == "tambah anak":
                 return child_handler.handle_add_child(user, message)
