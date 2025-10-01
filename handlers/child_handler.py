@@ -255,57 +255,57 @@ class ChildHandler:
                                 "• Analisis tren pertumbuhan\n\n"
                                 "💎 Upgrade ke premium untuk akses unlimited!")
                     else:
-                        # Fetch all growth records for premium users (no limit)
                         records = get_timbang_history(user, limit=None)
                         child_info = get_child(user)
                         
                         if not records:
                             reply = ("📊 Belum ada data pertumbuhan untuk membuat grafik.\n"
                                    "Ketik 'catat timbang' untuk menambah data terlebih dahulu.")
+                            resp.message(reply)
+                            return Response(str(resp), media_type="application/xml")
                         elif not child_info:
                             reply = ("👶 Data anak belum tersedia.\n"
                                    "Ketik 'tambah anak' untuk menambah data anak terlebih dahulu.")
+                            resp.message(reply)
+                            return Response(str(resp), media_type="application/xml")
                         else:
-                            # Import and use PremiumChartGenerator
                             from utils.premium_growth_charts import PremiumChartGenerator
-                            
-                            # Convert tuple data to dict format required by chart generator
                             growth_data, child_data = PremiumChartGenerator.convert_tuple_to_dict(records, child_info)
-                            
-                            # Generate chart filename
                             chart_filename = f"growth_chart_{user}.png"
                             chart_path = os.path.join("static", chart_filename)
-                            
                             # Generate the chart
                             if PremiumChartGenerator.generate_weight_chart(growth_data, child_data, chart_path):
-                                # Get BASE_URL from environment or use default
                                 base_url = os.getenv("BASE_URL", "http://localhost:8000")
                                 chart_url = f"{base_url}/static/{chart_filename}"
-                                
                                 reply = (f"📈 **Grafik Pertumbuhan {child_data.get('name', 'Anak')}**\n\n"
                                        f"✅ Grafik berhasil dibuat!\n"
                                        f"📊 Data: {len(growth_data)} catatan pertumbuhan\n\n"
                                        f"🔗 **Download:** {chart_url}\n\n"
                                        f"💡 Klik link di atas untuk melihat dan download grafik pertumbuhan.")
-                                
-                                # Try to send chart as WhatsApp media if possible
                                 try:
                                     resp.message().media(chart_url)
+                                    # Always add reply text in case media fails or is unsupported by client
+                                    resp.message(reply)
                                     return Response(str(resp), media_type="application/xml")
                                 except Exception as e:
                                     logging.warning(f"Could not send chart as media: {e}")
-                                    # Fall back to text message with download link
+                                    # Fallback: send a reply with a download link as text
+                                    resp.message(reply)
+                                    return Response(str(resp), media_type="application/xml")
                             else:
                                 reply = ("❌ Terjadi kesalahan saat membuat grafik.\n"
                                        "Silakan coba lagi atau hubungi support.")
+                                resp.message(reply)
+                                return Response(str(resp), media_type="application/xml")
                 except Exception as e:
-                    # Log error and provide user feedback
                     self.logger.error(f"Error generating premium growth chart for user {user}: {e}", exc_info=True)
                     reply = (
                         "❌ Terjadi kesalahan saat membuat grafik pertumbuhan.\n\n"
                         "Silakan coba lagi atau ketik 'help' untuk bantuan."
                     )
-                
+                    resp.message(reply)
+                    return Response(str(resp), media_type="application/xml")
+                            
             elif message.lower().startswith("lihat tumbuh kembang"):
                 try:
                     records = get_timbang_history(user)
