@@ -29,6 +29,9 @@ This feature adds premium growth chart generation capability to the baby trackin
 
 ### Environment Variables
 - `BASE_URL`: Base URL for serving static files (defaults to http://localhost:8000)
+  - **For Railway Deployment**: Set this to your public Railway URL (e.g., `https://your-app-name.up.railway.app`) in the Railway dashboard
+  - **For Local Development**: Leave unset to use the default localhost URL
+  - This ensures all chart download links are accessible to users regardless of deployment environment
 
 ### Dependencies
 - matplotlib: For chart generation
