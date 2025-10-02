@@ -4,6 +4,7 @@ Chart and PDF generation utilities
 Handles MPASI/milk charts and PDF report generation
 """
 import io
+import os
 from datetime import datetime, timedelta, date
 from fastapi.responses import StreamingResponse
 from database.operations import get_mpasi_summary, get_milk_intake_summary, get_user_calorie_setting
@@ -393,13 +394,18 @@ def generate_summary_statistics(data: list) -> dict:
 def format_chart_url(user_phone: str, chart_type: str = 'mpasi-milk') -> str:
     """
     Format chart URL for sharing or embedding
+    
+    NOTE: For Railway deployment, set the BASE_URL environment variable to your public Railway URL
+    (e.g., https://your-app-name.up.railway.app) in the Railway dashboard.
     """
     try:
         normalized_phone = normalize_user_phone(user_phone)
         # Remove 'whatsapp:' prefix for URL
         phone_for_url = normalized_phone.replace('whatsapp:', '').replace('+', '%2B')
         
-        base_url = "https://your-domain.com"  # Replace with actual domain
+        # Use BASE_URL environment variable for Railway/production deployment
+        # Defaults to localhost for local development
+        base_url = os.getenv('BASE_URL', 'http://localhost:8000')
         
         if chart_type == 'mpasi-milk':
             return f"{base_url}/mpasi-milk-graph/{phone_for_url}"

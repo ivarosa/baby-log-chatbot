@@ -277,6 +277,8 @@ class ChildHandler:
                             chart_path = os.path.join("static", chart_filename)
                             # Generate the chart
                             if PremiumChartGenerator.generate_weight_chart(growth_data, child_data, chart_path):
+                                # NOTE: For Railway deployment, set BASE_URL environment variable to your public Railway URL
+                                # (e.g., https://your-app-name.up.railway.app) in the Railway dashboard
                                 base_url = os.getenv("BASE_URL", "http://localhost:8000")
                                 chart_url = f"{base_url}/static/{chart_filename}"
                                 reply = (f"📈 **Grafik Pertumbuhan {child_data.get('name', 'Anak')}**\n\n"
