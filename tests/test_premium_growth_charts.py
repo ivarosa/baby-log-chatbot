@@ -203,3 +203,38 @@ def test_filename_sanitization_multiple_formats():
         safe_user = user.replace(':', '_').replace('+', '')
         chart_filename = f"growth_chart_{safe_user}.png"
         assert chart_filename == expected_filename, f"For user {user}, expected {expected_filename}, got {chart_filename}"
+
+
+def test_base_url_environment_variable():
+    """Test that chart URL generation respects BASE_URL environment variable"""
+    import os
+    from chart_generator import format_chart_url
+    
+    # Save original BASE_URL if it exists
+    original_base_url = os.environ.get('BASE_URL')
+    
+    try:
+        # Test 1: Default localhost when BASE_URL is not set
+        if 'BASE_URL' in os.environ:
+            del os.environ['BASE_URL']
+        
+        user_phone = "whatsapp:+1234567890"
+        chart_url = format_chart_url(user_phone, 'mpasi-milk')
+        assert 'localhost:8000' in chart_url, f"Expected localhost in default URL, got: {chart_url}"
+        
+        # Test 2: Custom Railway URL when BASE_URL is set
+        os.environ['BASE_URL'] = 'https://baby-log.up.railway.app'
+        chart_url = format_chart_url(user_phone, 'mpasi-milk')
+        assert chart_url.startswith('https://baby-log.up.railway.app/'), f"Expected Railway URL, got: {chart_url}"
+        assert 'localhost' not in chart_url, f"Should not contain localhost when BASE_URL is set, got: {chart_url}"
+        
+        # Test 3: PDF report URL with BASE_URL
+        pdf_url = format_chart_url(user_phone, 'pdf-report')
+        assert pdf_url.startswith('https://baby-log.up.railway.app/report-mpasi-milk/'), f"Expected PDF URL with BASE_URL, got: {pdf_url}"
+        
+    finally:
+        # Restore original BASE_URL
+        if original_base_url:
+            os.environ['BASE_URL'] = original_base_url
+        elif 'BASE_URL' in os.environ:
+            del os.environ['BASE_URL']
