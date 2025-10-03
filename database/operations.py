@@ -939,3 +939,28 @@ def delete_reminder(user: str, reminder_name: str) -> bool:
             ''', (user, reminder_name))
         
         return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def save_medication_reminder(user: str, data: Dict[str, Any]) -> None:
+    """Save medication reminder"""
+    pass
+
+@ErrorHandler.handle_database_error
+def get_medication_reminders(user: str) -> List[Tuple]:
+    """Get user's active medication reminders"""
+    pass
+
+@ErrorHandler.handle_database_error
+def log_medication_intake(user: str, data: Dict[str, Any]) -> None:
+    """Log medication intake"""
+    pass
+
+@ErrorHandler.handle_database_error
+def get_medication_history(user: str, days: int = 7) -> List[Tuple]:
+    """Get medication history"""
+    pass
+
+@ErrorHandler.handle_database_error
+def calculate_adherence_rate(user: str, medication_name: str = None) -> float:
+    """Calculate medication adherence rate (percentage)"""
+    pass
