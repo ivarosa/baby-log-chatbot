@@ -162,6 +162,40 @@ def create_postgresql_tables(cursor):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS medication_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            medication_name TEXT NOT NULL,
+            medication_type TEXT NOT NULL,
+            dosage TEXT,
+            frequency TEXT NOT NULL,
+            interval_hours INTEGER,
+            specific_times TEXT,
+            start_date DATE NOT NULL,
+            end_date DATE,
+            is_active INTEGER DEFAULT 1,
+            last_sent TIMESTAMP,
+            next_due TIMESTAMP,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS medication_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            reminder_id INTEGER,
+            medication_name TEXT NOT NULL,
+            date DATE NOT NULL,
+            time TEXT NOT NULL,
+            dosage TEXT,
+            taken BOOLEAN DEFAULT TRUE,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (reminder_id) REFERENCES medication_reminders(id)
+        )
         """
     ]
     
@@ -298,6 +332,40 @@ def create_sqlite_tables(cursor):
             payment_reference TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS medication_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            medication_name TEXT NOT NULL,
+            medication_type TEXT NOT NULL,
+            dosage TEXT,
+            frequency TEXT NOT NULL,
+            interval_hours INTEGER,
+            specific_times TEXT,
+            start_date DATE NOT NULL,
+            end_date DATE,
+            is_active INTEGER DEFAULT 1,
+            last_sent TIMESTAMP,
+            next_due TIMESTAMP,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS medication_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            reminder_id INTEGER,
+            medication_name TEXT NOT NULL,
+            date DATE NOT NULL,
+            time TEXT NOT NULL,
+            dosage TEXT,
+            taken BOOLEAN DEFAULT TRUE,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (reminder_id) REFERENCES medication_reminders(id)
         )
         """
     ]
