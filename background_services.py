@@ -774,5 +774,12 @@ def configure_services_from_env():
     except Exception as e:
         app_logger.log_error(e, context={'function': 'configure_services_from_env'})
 
+def _check_and_send_medication_reminders(self):
+    """Check for due medication reminders"""
+    # Similar to milk reminders but with medication-specific logic
+    # Handle different frequency types (daily, weekly, custom)
+    # Send medication-specific reminders with dosage info
+    pass
+
 # Initialize configuration on module import
 configure_services_from_env()
