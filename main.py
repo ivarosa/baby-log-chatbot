@@ -638,21 +638,17 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Main entry point
 if __name__ == "__main__":
     import uvicorn
-    
-    # Production configuration
     port = int(os.getenv("PORT", 8000))
     host = "0.0.0.0"
     workers = int(os.getenv("WORKERS", 4))
-    
     logger.info(f"Starting server on {host}:{port} with {workers} workers")
-    
     uvicorn.run(
         "main:app",
         host=host,
         port=port,
         workers=workers,
-        loop="uvloop",  # Better performance
+        loop="uvloop",
         access_log=True,
         log_level="info",
-        reload=False  # Never use reload in production
+        reload=False
     )
