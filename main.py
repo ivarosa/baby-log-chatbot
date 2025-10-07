@@ -60,6 +60,13 @@ except Exception as e:
     logger.critical(f"Failed to initialize core components: {e}")
     sys.exit(1)
 
+# Initialize handler variables
+child_handler = None
+feeding_handler = None
+sleep_handler = None
+reminder_handler = None
+summary_handler = None
+
 # Lifecycle management
 @asynccontextmanager
 async def lifespan(app: FastAPI):
