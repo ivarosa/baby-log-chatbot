@@ -1011,17 +1011,87 @@ def delete_reminder(user: str, reminder_name: str) -> bool:
 @ErrorHandler.handle_database_error
 def save_medication_reminder(user: str, data: Dict[str, Any]) -> None:
     """Save medication reminder"""
-    pass
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('medication_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, medication_name, medication_type, dosage, frequency, 
+                 interval_hours, specific_times, start_date, end_date, notes, next_due)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (user, data['medication_name'], data['medication_type'], 
+                  data['dosage'], data['frequency'], data.get('interval_hours'),
+                  data.get('specific_times'), data['start_date'], 
+                  data.get('end_date'), data.get('notes'), data.get('next_due')))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, medication_name, medication_type, dosage, frequency,
+                 interval_hours, specific_times, start_date, end_date, notes, next_due)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user, data['medication_name'], data['medication_type'],
+                  data['dosage'], data['frequency'], data.get('interval_hours'),
+                  data.get('specific_times'), data['start_date'],
+                  data.get('end_date'), data.get('notes'), data.get('next_due')))
 
 @ErrorHandler.handle_database_error
 def get_medication_reminders(user: str) -> List[Tuple]:
-    """Get user's active medication reminders"""
-    pass
+    """Get active medication reminders"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('medication_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                SELECT medication_name, medication_type, dosage, frequency, 
+                       start_date, end_date, is_active
+                FROM {table_name} 
+                WHERE {user_col}=%s AND is_active=TRUE
+                ORDER BY created_at DESC
+            ''', (user,))
+        else:
+            c.execute(f'''
+                SELECT medication_name, medication_type, dosage, frequency,
+                       start_date, end_date, is_active
+                FROM {table_name}
+                WHERE {user_col}=? AND is_active=1
+                ORDER BY created_at DESC
+            ''', (user,))
+        return c.fetchall()
 
 @ErrorHandler.handle_database_error
 def log_medication_intake(user: str, data: Dict[str, Any]) -> None:
     """Log medication intake"""
-    pass
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('medication_log')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name}
+                ({user_col}, reminder_id, medication_name, date, time, 
+                 dosage, taken, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (user, data.get('reminder_id'), data['medication_name'],
+                  data['date'], data['time'], data.get('dosage'),
+                  data['taken'], data.get('notes', '')))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name}
+                ({user_col}, reminder_id, medication_name, date, time,
+                 dosage, taken, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user, data.get('reminder_id'), data['medication_name'],
+                  data['date'], data['time'], data.get('dosage'),
+                  data['taken'], data.get('notes', '')))
 
 @ErrorHandler.handle_database_error
 def get_medication_history(user: str, days: int = 7) -> List[Tuple]:
