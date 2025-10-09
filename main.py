@@ -61,6 +61,7 @@ feeding_handler = None
 sleep_handler = None
 reminder_handler = None
 summary_handler = None
+medication_handler = None
 
 # Simple healthcheck flag
 app_ready = False
@@ -192,7 +193,7 @@ async def initialize_database_with_retry(max_retries: int = 5):
 # Initialize handlers with fallback
 async def initialize_handlers():
     """Initialize all handlers with fallback mechanisms"""
-    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler
+    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler, medication_handler
     
     try:
         logger.info("🔧 Starting handler initialization...")
@@ -202,12 +203,14 @@ async def initialize_handlers():
         from handlers.sleep_handler import SleepHandler
         from handlers.reminder_handler import ReminderHandler
         from handlers.summary_handler import SummaryHandler
-        
+        from handlers.medication_reminder import MedicationHandler
+
         child_handler = ChildHandler(session_manager, logger)
         feeding_handler = FeedingHandler(session_manager, logger)
         sleep_handler = SleepHandler(session_manager, logger)
         reminder_handler = ReminderHandler(session_manager, logger)
         summary_handler = SummaryHandler(session_manager, logger)
+        medication_handler = MedicationHandler(session_manager, logger)
         
         logger.info("✅ All handlers initialized successfully")
         
@@ -394,6 +397,8 @@ async def route_session_command(user: str, message: str, state: str, background_
         return sleep_handler.handle_sleep_commands(user, message)
     elif state.startswith("REMINDER"):
         return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+    elif state.startswith("MED_"):
+        return medication_handler.handle_medication_commands(user, message, background_tasks)
     else:
         session_manager.clear_session(user)
         resp = MessagingResponse()
@@ -424,6 +429,10 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     # Reminders
     elif msg in ["set reminder susu", "show reminders", "skip reminder"] or msg.startswith(("done ", "snooze ", "henti reminder", "delete reminder")):
         return reminder_handler.handle_reminder_commands(user, message, background_tasks)
+
+    # Medication
+    elif msg in ["set reminder obat", "lihat obat", "show medication"] or msg.startswith("taken "):
+        return medication_handler.handle_medication_commands(user, message, background_tasks)
     
     # Summary
     elif "summary" in msg or "ringkasan" in msg:
