@@ -1098,6 +1098,189 @@ def get_medication_history(user: str, days: int = 7) -> List[Tuple]:
     """Get medication history"""
     pass
 
+# database/operations.py
+# Add these functions to the existing file
+
+@ErrorHandler.handle_database_error
+@ErrorHandler.handle_validation_error
+def save_meal_reminder(user: str, data: Dict[str, Any]) -> None:
+    """Save meal reminder"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    # Validate meal_type
+    valid_meal_types = ['breakfast', 'lunch', 'dinner', 'snack']
+    if data['meal_type'] not in valid_meal_types:
+        raise ValidationError(f"Invalid meal_type: {data['meal_type']}")
+    
+    # Validate time format
+    is_valid, error_msg = InputValidator.validate_time(data['reminder_time'])
+    if not is_valid:
+        raise ValidationError(f"Invalid time: {error_msg}")
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, reminder_name, meal_type, reminder_time, days_of_week, next_due)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (user, data['reminder_name'], data['meal_type'], 
+                  data['reminder_time'], data.get('days_of_week'), 
+                  data['next_due']))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} 
+                ({user_col}, reminder_name, meal_type, reminder_time, days_of_week, next_due)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (user, data['reminder_name'], data['meal_type'], 
+                  data['reminder_time'], data.get('days_of_week'), 
+                  data['next_due']))
+
+@ErrorHandler.handle_database_error
+def get_meal_reminders(user: str) -> List[Tuple]:
+    """Get user's active meal reminders"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                SELECT id, reminder_name, meal_type, reminder_time, 
+                       is_active, next_due, days_of_week
+                FROM {table_name} 
+                WHERE {user_col}=%s AND is_active=TRUE
+                ORDER BY reminder_time ASC
+            ''', (user,))
+        else:
+            c.execute(f'''
+                SELECT id, reminder_name, meal_type, reminder_time, 
+                       is_active, next_due, days_of_week
+                FROM {table_name} 
+                WHERE {user_col}=? AND is_active=1
+                ORDER BY reminder_time ASC
+            ''', (user,))
+        return c.fetchall()
+
+@ErrorHandler.handle_database_error
+def get_due_meal_reminders(now: datetime) -> List[Tuple]:
+    """Get all due meal reminders for background service"""
+    database_url = os.environ.get('DATABASE_URL')
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                SELECT * FROM {table_name} 
+                WHERE is_active=TRUE AND next_due <= %s
+                ORDER BY next_due ASC
+            ''', (now,))
+        else:
+            c.execute(f'''
+                SELECT * FROM {table_name} 
+                WHERE is_active=1 AND next_due <= ?
+                ORDER BY next_due ASC
+            ''', (now,))
+        return c.fetchall()
+
+@ErrorHandler.handle_database_error
+def update_meal_reminder_next_due(reminder_id: int, next_due: datetime) -> bool:
+    """Update meal reminder next due time"""
+    from timezone_handler import TimezoneHandler
+    
+    database_url = os.environ.get('DATABASE_URL')
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET next_due=%s, last_sent=%s 
+                WHERE id=%s
+            ''', (next_due, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
+        else:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET next_due=?, last_sent=? 
+                WHERE id=?
+            ''', (next_due, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
+        
+        return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def stop_meal_reminder(user: str, reminder_name: str) -> bool:
+    """Stop/deactivate a meal reminder"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET is_active=FALSE 
+                WHERE {user_col}=%s AND reminder_name=%s
+            ''', (user, reminder_name))
+        else:
+            c.execute(f'''
+                UPDATE {table_name} 
+                SET is_active=0 
+                WHERE {user_col}=? AND reminder_name=?
+            ''', (user, reminder_name))
+        
+        return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def delete_meal_reminder(user: str, reminder_name: str) -> bool:
+    """Delete a meal reminder permanently"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                DELETE FROM {table_name} 
+                WHERE {user_col}=%s AND reminder_name=%s
+            ''', (user, reminder_name))
+        else:
+            c.execute(f'''
+                DELETE FROM {table_name} 
+                WHERE {user_col}=? AND reminder_name=?
+            ''', (user, reminder_name))
+        
+        return c.rowcount > 0
+
+@ErrorHandler.handle_database_error
+def get_meal_reminder_count(user: str) -> int:
+    """Get count of active meal reminders for a user"""
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        if database_url:
+            c.execute(f'''
+                SELECT COUNT(*) FROM {table_name} 
+                WHERE {user_col}=%s AND is_active=TRUE
+            ''', (user,))
+        else:
+            c.execute(f'''
+                SELECT COUNT(*) FROM {table_name} 
+                WHERE {user_col}=? AND is_active=1
+            ''', (user,))
+        
+        result = c.fetchone()
+        return result[0] if result else 0
+
 @ErrorHandler.handle_database_error
 def calculate_adherence_rate(user: str, medication_name: str = None) -> float:
     """Calculate medication adherence rate (percentage)"""
