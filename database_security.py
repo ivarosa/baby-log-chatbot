@@ -10,7 +10,7 @@ class DatabaseSecurity:
         'child', 'timbang_log', 'mpasi_log', 'poop_log',
         'pumping_log', 'milk_intake_log', 'calorie_setting',
         'milk_reminders', 'reminder_logs', 'user_tiers',
-        'user_subscriptions', 'sleep_log'
+        'user_subscriptions', 'sleep_log','meal_reminders'
     ]
     
     @staticmethod
