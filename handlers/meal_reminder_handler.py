@@ -405,3 +405,357 @@ class MealReminderHandler:
                     meal_info = self.MEAL_TYPES.get(meal_type, {})
                     emoji = meal_info.get('emoji', '🍽️')
                     meal_name = meal_info.get('name', meal_type)
+                    status = "🟢 Aktif" if is_active else "🔴 Nonaktif"
+                    
+                    # Format days
+                    if days_of_week:
+                        try:
+                            days_list = json.loads(days_of_week)
+                            days_display = self._format_days_display(days_list)
+                        except:
+                            days_display = "Setiap hari"
+                    else:
+                        days_display = "Setiap hari"
+                    
+                    # Format next due
+                    if next_due:
+                        try:
+                            if isinstance(next_due, str):
+                                next_due_dt = datetime.fromisoformat(next_due.replace('Z', '+00:00'))
+                            else:
+                                next_due_dt = next_due
+                            
+                            next_due_local = TimezoneHandler.to_local(next_due_dt, user)
+                            next_due_str = next_due_local.strftime('%d/%m %H:%M')
+                        except:
+                            next_due_str = "Tidak diketahui"
+                    else:
+                        next_due_str = "Tidak diketahui"
+                    
+                    reply += (
+                        f"{i}. {emoji} **{meal_name}** {status}\n"
+                        f"   ⏰ Jam: {reminder_time}\n"
+                        f"   📅 Hari: {days_display}\n"
+                        f"   📍 Berikutnya: {next_due_str}\n\n"
+                    )
+                
+                reply += (
+                    f"**Kelola pengingat:**\n"
+                    f"• `henti reminder makan [nama]` - Matikan\n"
+                    f"• `delete reminder makan [nama]` - Hapus\n\n"
+                    f"**Respons cepat saat pengingat:**\n"
+                    f"• `done makan` - Tandai selesai\n"
+                    f"• `snooze [menit]` - Tunda\n"
+                    f"• `skip reminder` - Lewati"
+                )
+                
+                # Add tier info
+                limits = get_tier_limits(user)
+                if limits.get("active_reminders"):
+                    reply += f"\n\n📊 Pengingat makan: {len(reminders)}"
+            
+            self.app_logger.log_user_action(
+                user_id=user,
+                action='meal_reminders_viewed',
+                success=True,
+                details={'reminder_count': len(reminders)}
+            )
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, 
+                context={'function': 'handle_show_meal_reminders'})
+            reply = f"❌ Terjadi kesalahan saat mengambil pengingat. Kode error: {error_id}"
+        
+        resp.message(reply)
+        return Response(str(resp), media_type="application/xml")
+    
+    def handle_done_meal(self, user: str) -> Response:
+        """Handle 'done makan' quick response"""
+        resp = MessagingResponse()
+        
+        try:
+            self.app_logger.log_user_action(
+                user_id=user,
+                action='meal_completed_via_reminder',
+                success=True,
+                details={'time': datetime.now().strftime('%H:%M')}
+            )
+            
+            reply = (
+                f"✅ **Selesai makan!**\n\n"
+                f"📝 Jangan lupa catat makanannya:\n"
+                f"• `catat mpasi` - Detail makanan bayi\n\n"
+                f"💡 **Tips:**\n"
+                f"Tracking makanan membantu monitor:\n"
+                f"• Asupan nutrisi harian\n"
+                f"• Variasi menu\n"
+                f"• Pola makan bayi\n\n"
+                f"Ketik `catat mpasi` untuk mencatat sekarang."
+            )
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, 
+                context={'function': 'handle_done_meal'})
+            reply = f"❌ Terjadi kesalahan. Kode error: {error_id}"
+        
+        resp.message(reply)
+        return Response(str(resp), media_type="application/xml")
+    
+    def handle_stop_meal_reminder(self, user: str, message: str) -> Response:
+        """Stop a meal reminder"""
+        resp = MessagingResponse()
+        
+        try:
+            parts = message.split(" ", 3)
+            if len(parts) < 4:
+                reply = (
+                    f"❌ **Format tidak lengkap**\n\n"
+                    f"Gunakan: `henti reminder makan [nama]`\n\n"
+                    f"**Contoh:**\n"
+                    f"• `henti reminder makan Pengingat Sarapan`\n"
+                    f"• `henti reminder makan Pengingat Makan Siang`\n\n"
+                    f"Ketik `show meal reminders` untuk melihat nama pengingat."
+                )
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            
+            reminder_name = parts[3].strip()
+            success = stop_meal_reminder(user, reminder_name)
+            
+            if success:
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_stopped',
+                    success=True,
+                    details={'reminder_name': reminder_name}
+                )
+                
+                reply = (
+                    f"✅ **Pengingat '{reminder_name}' dinonaktifkan**\n\n"
+                    f"🔔 Pengingat tidak akan mengirim notifikasi lagi.\n\n"
+                    f"💡 Untuk mengaktifkan kembali atau menghapus permanent:\n"
+                    f"• Buat baru: `set reminder makan`\n"
+                    f"• Hapus: `delete reminder makan {reminder_name}`"
+                )
+            else:
+                reply = (
+                    f"❌ **Tidak dapat menonaktifkan '{reminder_name}'**\n\n"
+                    f"Kemungkinan:\n"
+                    f"• Nama pengingat tidak ditemukan\n"
+                    f"• Sudah tidak aktif\n\n"
+                    f"Ketik `show meal reminders` untuk melihat daftar."
+                )
+                
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_stopped',
+                    success=False,
+                    details={'reminder_name': reminder_name}
+                )
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, 
+                context={'function': 'handle_stop_meal_reminder'})
+            reply = f"❌ Terjadi kesalahan. Kode error: {error_id}"
+        
+        resp.message(reply)
+        return Response(str(resp), media_type="application/xml")
+    
+    def handle_delete_meal_reminder(self, user: str, message: str) -> Response:
+        """Delete a meal reminder permanently"""
+        resp = MessagingResponse()
+        
+        try:
+            parts = message.split(" ", 3)
+            if len(parts) < 4:
+                reply = (
+                    f"❌ **Format tidak lengkap**\n\n"
+                    f"Gunakan: `delete reminder makan [nama]`\n\n"
+                    f"**Contoh:**\n"
+                    f"• `delete reminder makan Pengingat Sarapan`\n"
+                    f"• `delete reminder makan Pengingat Snack`\n\n"
+                    f"Ketik `show meal reminders` untuk melihat nama pengingat."
+                )
+                resp.message(reply)
+                return Response(str(resp), media_type="application/xml")
+            
+            reminder_name = parts[3].strip()
+            success = delete_meal_reminder(user, reminder_name)
+            
+            if success:
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_deleted',
+                    success=True,
+                    details={'reminder_name': reminder_name}
+                )
+                
+                reply = (
+                    f"✅ **Pengingat '{reminder_name}' dihapus**\n\n"
+                    f"🗑️ Pengingat telah dihapus permanent.\n\n"
+                    f"💡 Untuk membuat pengingat baru:\n"
+                    f"`set reminder makan`"
+                )
+            else:
+                reply = (
+                    f"❌ **Tidak dapat menghapus '{reminder_name}'**\n\n"
+                    f"Kemungkinan:\n"
+                    f"• Nama pengingat tidak ditemukan\n"
+                    f"• Sudah terhapus\n\n"
+                    f"Ketik `show meal reminders` untuk melihat daftar."
+                )
+                
+                self.app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_deleted',
+                    success=False,
+                    details={'reminder_name': reminder_name}
+                )
+            
+        except Exception as e:
+            error_id = self.app_logger.log_error(e, user_id=user, 
+                context={'function': 'handle_delete_meal_reminder'})
+            reply = f"❌ Terjadi kesalahan. Kode error: {error_id}"
+        
+        resp.message(reply)
+        return Response(str(resp), media_type="application/xml")
+    
+    def _parse_meal_type(self, message: str) -> Optional[str]:
+        """Parse user input to meal type"""
+        message = message.lower().strip()
+        
+        meal_mapping = {
+            'sarapan': 'breakfast',
+            'breakfast': 'breakfast',
+            'pagi': 'breakfast',
+            
+            'makan siang': 'lunch',
+            'lunch': 'lunch',
+            'siang': 'lunch',
+            
+            'makan malam': 'dinner',
+            'dinner': 'dinner',
+            'malam': 'dinner',
+            
+            'snack': 'snack',
+            'cemilan': 'snack',
+            'camilan': 'snack'
+        }
+        
+        return meal_mapping.get(message)
+    
+    def _parse_custom_days(self, message: str) -> Optional[list]:
+        """Parse custom days input"""
+        day_mapping = {
+            'senin': 'mon', 'monday': 'mon',
+            'selasa': 'tue', 'tuesday': 'tue',
+            'rabu': 'wed', 'wednesday': 'wed',
+            'kamis': 'thu', 'thursday': 'thu',
+            'jumat': 'fri', 'friday': 'fri',
+            'sabtu': 'sat', 'saturday': 'sat',
+            'minggu': 'sun', 'sunday': 'sun'
+        }
+        
+        # Split by comma and clean
+        day_inputs = [d.strip().lower() for d in message.split(',')]
+        
+        parsed_days = []
+        for day_input in day_inputs:
+            if day_input in day_mapping:
+                parsed_days.append(day_mapping[day_input])
+        
+        return parsed_days if parsed_days else None
+    
+    def _format_days_display(self, days_list: list) -> str:
+        """Format days list for display"""
+        day_names = {
+            'mon': 'Sen', 'tue': 'Sel', 'wed': 'Rab',
+            'thu': 'Kam', 'fri': 'Jum', 'sat': 'Sab', 'sun': 'Min'
+        }
+        
+        if len(days_list) == 7:
+            return "Setiap hari"
+        elif set(days_list) == {'mon', 'tue', 'wed', 'thu', 'fri'}:
+            return "Hari kerja (Sen-Jum)"
+        elif set(days_list) == {'sat', 'sun'}:
+            return "Akhir pekan (Sab-Min)"
+        else:
+            return ", ".join([day_names.get(d, d) for d in days_list])
+    
+    def _calculate_next_due(self, user: str, reminder_time: str, 
+                           days_of_week: list) -> datetime:
+        """Calculate next due time for reminder"""
+        current_local = TimezoneHandler.now_local(user)
+        
+        hour, minute = map(int, reminder_time.split(':'))
+        
+        # Start from today
+        next_due_local = current_local.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        
+        # If time has passed today, start from tomorrow
+        if next_due_local <= current_local:
+            next_due_local += timedelta(days=1)
+        
+        # Find next valid day
+        max_attempts = 7  # Check up to 7 days
+        for _ in range(max_attempts):
+            day_abbr = next_due_local.strftime('%a').lower()[:3]
+            if day_abbr in days_of_week:
+                break
+            next_due_local += timedelta(days=1)
+        
+        # Convert to UTC for storage
+        next_due_utc = TimezoneHandler.to_utc(next_due_local, user).replace(tzinfo=None)
+        
+        return next_due_utc
+    
+    def _format_meal_reminder_confirmation(self, data: dict) -> str:
+        """Format confirmation message"""
+        meal_type = data['meal_type']
+        meal_info = self.MEAL_TYPES[meal_type]
+        reminder_time = data['reminder_time']
+        days_of_week = json.loads(data['days_of_week'])
+        
+        days_display = self._format_days_display(days_of_week)
+        
+        return (
+            f"✅ **Konfirmasi Pengingat Makan**\n\n"
+            f"{meal_info['emoji']} **Jenis:** {meal_info['name']}\n"
+            f"⏰ **Jam:** {reminder_time}\n"
+            f"📅 **Hari:** {days_display}\n\n"
+            f"Apakah data sudah benar?\n"
+            f"• Ketik `ya` untuk simpan\n"
+            f"• Ketik `tidak` untuk mengulang\n"
+            f"• Ketik `batal` untuk membatalkan"
+        )
+    
+    def _handle_unknown_meal_reminder_command(self, user: str, message: str) -> Response:
+        """Handle unknown meal reminder commands"""
+        resp = MessagingResponse()
+        
+        self.app_logger.log_user_action(
+            user_id=user,
+            action='unknown_meal_reminder_command',
+            success=False,
+            details={'message': message}
+        )
+        
+        reply = (
+            f"🤖 Perintah tidak dikenali: '{message[:30]}...'\n\n"
+            f"**Perintah pengingat makan:**\n\n"
+            f"**Setup & Kelola:**\n"
+            f"• `set reminder makan` - Buat baru\n"
+            f"• `show meal reminders` - Lihat semua\n"
+            f"• `henti reminder makan [nama]` - Nonaktifkan\n"
+            f"• `delete reminder makan [nama]` - Hapus\n\n"
+            f"**Respons Cepat:**\n"
+            f"• `done makan` - Tandai selesai\n"
+            f"• `snooze [menit]` - Tunda\n"
+            f"• `skip reminder` - Lewati\n\n"
+            f"Ketik `help` untuk bantuan lengkap."
+        )
+        
+        resp.message(reply)
+        return Response(str(resp), media_type="application/xml")
