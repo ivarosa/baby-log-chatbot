@@ -23,10 +23,8 @@ def init_database():
         c = conn.cursor()
         
         if database_url:
-            # PostgreSQL table creation
             create_postgresql_tables(c)
         else:
-            # SQLite table creation
             create_sqlite_tables(c)
         
         logging.info("Database tables initialized successfully")
@@ -195,6 +193,20 @@ def create_postgresql_tables(cursor):
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (reminder_id) REFERENCES medication_reminders(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS meal_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            reminder_name TEXT NOT NULL,
+            meal_type TEXT NOT NULL,
+            reminder_time TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            last_sent TIMESTAMP,
+            next_due TIMESTAMP,
+            days_of_week TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     ]
@@ -366,6 +378,20 @@ def create_sqlite_tables(cursor):
             notes TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (reminder_id) REFERENCES medication_reminders(id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS meal_reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user TEXT NOT NULL,
+            reminder_name TEXT NOT NULL,
+            meal_type TEXT NOT NULL,
+            reminder_time TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            last_sent TIMESTAMP,
+            next_due TIMESTAMP,
+            days_of_week TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     ]
