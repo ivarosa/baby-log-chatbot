@@ -193,29 +193,29 @@ async def initialize_database_with_retry(max_retries: int = 5):
 # Initialize handlers with fallback
 async def initialize_handlers():
     """Initialize all handlers with fallback mechanisms"""
-    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler, medication_handler
+    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler, meal_reminder_handler
     
     try:
-        logger.info("🔧 Starting handler initialization...")
+        logger.info("Starting handler initialization...")
         
         from handlers.child_handler import ChildHandler
         from handlers.feeding_handler import FeedingHandler
         from handlers.sleep_handler import SleepHandler
         from handlers.reminder_handler import ReminderHandler
         from handlers.summary_handler import SummaryHandler
-        from handlers.medication_reminder import MedicationHandler
-
+        from handlers.meal_reminder_handler import MealReminderHandler  # ADD THIS
+        
         child_handler = ChildHandler(session_manager, logger)
         feeding_handler = FeedingHandler(session_manager, logger)
         sleep_handler = SleepHandler(session_manager, logger)
         reminder_handler = ReminderHandler(session_manager, logger)
         summary_handler = SummaryHandler(session_manager, logger)
-        medication_handler = MedicationHandler(session_manager, logger)
+        meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
         
-        logger.info("✅ All handlers initialized successfully")
+        logger.info("All handlers initialized successfully")
         
     except Exception as e:
-        logger.error(f"❌ Handler initialization failed: {e}", exc_info=True)
+        logger.error(f"Handler initialization failed: {e}")
         create_fallback_handlers()
         
 def create_fallback_handlers():
@@ -399,6 +399,10 @@ async def route_session_command(user: str, message: str, state: str, background_
         return reminder_handler.handle_reminder_commands(user, message, background_tasks)
     elif state.startswith("MED_"):
         return medication_handler.handle_medication_commands(user, message, background_tasks)
+    elif state.startswith("MEAL_REMINDER"):
+        if hasattr(meal_reminder_handler, 'handle_meal_reminder_commands'):
+            return meal_reminder_handler.handle_meal_reminder_commands(user, message, background_tasks)
+        return meal_reminder_handler.handle_commands(user, message)
     else:
         session_manager.clear_session(user)
         resp = MessagingResponse()
@@ -433,6 +437,13 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     # Medication
     elif msg in ["set reminder obat", "lihat obat", "show medication"] or msg.startswith("taken "):
         return medication_handler.handle_medication_commands(user, message, background_tasks)
+
+    elif message_lower in ["set reminder makan", "atur pengingat makan",
+                          "show meal reminders", "lihat pengingat makan",
+                          "done makan", "selesai makan"] or \
+         message_lower.startswith(("henti reminder makan", "delete reminder makan")):
+        if meal_reminder_handler and hasattr(meal_reminder_handler, 'handle_meal_reminder_commands'):
+            return meal_reminder_handler.handle_meal_reminder_commands(user, message, background_tasks)
     
     # Summary
     elif "summary" in msg or "ringkasan" in msg:
