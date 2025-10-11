@@ -55,20 +55,22 @@ class ReminderScheduler:
                 app_logger.log_error(e, context={'function': 'scheduler_loop'})
                 time.sleep(300)  # Wait 5 minutes before retrying
     
-    def _check_and_send_reminders(self):
-        """Check for due reminders and send notifications"""
+    # background_services.py
+
+    def _check_milk_reminders(self):
+        """Check and send milk reminders (your existing code)"""
         try:
             database_url = os.environ.get('DATABASE_URL')
             user_col = DatabaseSecurity.get_user_column(database_url)
             reminder_table = DatabaseSecurity.validate_table_name('milk_reminders')
             
             # Get current time for comparison - use UTC for database
-            now = TimezoneHandler.now_utc().replace(tzinfo=None)  # Remove timezone info for database compatibility
+            now = TimezoneHandler.now_utc().replace(tzinfo=None)
             
             with db_pool.get_connection() as conn:
                 c = conn.cursor()
                 
-                # Get due reminders
+                # Get due milk reminders
                 if database_url:
                     c.execute(f'''
                         SELECT * FROM {reminder_table} 
@@ -84,14 +86,76 @@ class ReminderScheduler:
                 
                 due_reminders = c.fetchall()
             
-            app_logger.app_logger.info(f"Found {len(due_reminders)} due reminders")
+            app_logger.app_logger.info(f"Found {len(due_reminders)} due milk reminders")
             
             for reminder in due_reminders:
                 try:
-                    self._process_reminder(reminder)
+                    self._process_reminder(reminder)  # Your existing _process_reminder for milk
                 except Exception as e:
-                    app_logger.log_error(e, context={'function': 'process_reminder', 'reminder_id': reminder[0] if reminder else None})
+                    app_logger.log_error(e, context={
+                        'function': 'process_milk_reminder', 
+                        'reminder_id': reminder[0] if reminder else None
+                    })
                     
+        except Exception as e:
+            app_logger.log_error(e, context={'function': '_check_milk_reminders'})
+
+    # background_services.py
+
+    def _check_meal_reminders(self):
+        """Check and send meal reminders (NEW)"""
+        try:
+            database_url = os.environ.get('DATABASE_URL')
+            user_col = DatabaseSecurity.get_user_column(database_url)
+            reminder_table = DatabaseSecurity.validate_table_name('meal_reminders')  # Different table!
+            
+            # Get current time for comparison - use UTC for database
+            now = TimezoneHandler.now_utc().replace(tzinfo=None)
+            
+            with db_pool.get_connection() as conn:
+                c = conn.cursor()
+                
+                # Get due meal reminders
+                if database_url:
+                    c.execute(f'''
+                        SELECT * FROM {reminder_table} 
+                        WHERE is_active=TRUE AND next_due <= %s
+                        ORDER BY next_due ASC
+                    ''', (now,))
+                else:
+                    c.execute(f'''
+                        SELECT * FROM {reminder_table} 
+                        WHERE is_active=1 AND next_due <= ?
+                        ORDER BY next_due ASC
+                    ''', (now,))
+                
+                due_reminders = c.fetchall()
+            
+            app_logger.app_logger.info(f"Found {len(due_reminders)} due meal reminders")
+            
+            for reminder in due_reminders:
+                try:
+                    self._process_meal_reminder(reminder)  # New method for meal reminders
+                except Exception as e:
+                    app_logger.log_error(e, context={
+                        'function': 'process_meal_reminder',
+                        'reminder_id': reminder[0] if reminder else None
+                    })
+                    
+        except Exception as e:
+            app_logger.log_error(e, context={'function': '_check_meal_reminders'})
+    
+    # background_services.py
+
+    def _check_and_send_reminders(self):
+        """Check for due reminders and send notifications"""
+        try:
+            # Check milk reminders (existing functionality)
+            self._check_milk_reminders()
+            
+            # Check meal reminders (new functionality)
+            self._check_meal_reminders()
+                
         except Exception as e:
             app_logger.log_error(e, context={'function': '_check_and_send_reminders'})
     
@@ -239,6 +303,187 @@ class ReminderScheduler:
                     
         except Exception as e:
             app_logger.log_error(e, context={'function': 'update_reminder', 'reminder_id': reminder_id})
+
+    # background_services.py
+
+    def _process_meal_reminder(self, reminder):
+        """Process a single meal reminder (NEW METHOD)"""
+        import json
+        from datetime import timedelta
+        
+        database_url = os.environ.get('DATABASE_URL')
+        user_col = DatabaseSecurity.get_user_column(database_url)
+        
+        # Extract reminder data from tuple
+        # Tuple format: id, user, reminder_name, meal_type, reminder_time, 
+        #               is_active, last_sent, next_due, days_of_week, created_at
+        reminder_id = reminder[0]
+        user = reminder[1]
+        reminder_name = reminder[2]
+        meal_type = reminder[3]
+        reminder_time = reminder[4]
+        last_sent = reminder[6] if len(reminder) > 6 else None
+        next_due = reminder[7] if len(reminder) > 7 else None
+        days_of_week = reminder[8] if len(reminder) > 8 else None
+        
+        # Check if reminder was sent too recently (prevent duplicates)
+        current_time_utc = TimezoneHandler.now_utc().replace(tzinfo=None)
+        if last_sent:
+            try:
+                if isinstance(last_sent, str):
+                    last_sent_dt = datetime.fromisoformat(last_sent.replace('Z', '+00:00')).replace(tzinfo=None)
+                else:
+                    last_sent_dt = last_sent
+                
+                time_since_last = (current_time_utc - last_sent_dt).total_seconds()
+                # Don't send if less than 10 minutes since last send
+                if time_since_last < 600:
+                    app_logger.app_logger.info(f"Skipping meal reminder {reminder_id} - sent {time_since_last:.0f}s ago")
+                    return
+            except Exception as e:
+                app_logger.log_error(e, context={'function': 'parse_last_sent', 'reminder_id': reminder_id})
+        
+        # Check if today is valid day for this reminder
+        if days_of_week:
+            try:
+                days_list = json.loads(days_of_week) if isinstance(days_of_week, str) else days_of_week
+                current_local = TimezoneHandler.now_local(user)
+                today_abbr = current_local.strftime('%a').lower()[:3]
+                
+                if today_abbr not in days_list:
+                    app_logger.app_logger.info(f"Skipping meal reminder {reminder_id} - not scheduled for {today_abbr}")
+                    # Update next_due to tomorrow
+                    self._update_meal_reminder_next_due(user, reminder_id, reminder_time, days_list)
+                    return
+            except Exception as e:
+                app_logger.log_error(e, context={'function': 'check_days_of_week', 'reminder_id': reminder_id})
+        
+        # Check user's tier and message limits
+        user_info = get_user_tier(user)
+        
+        if user_info['tier'] == 'free' and user_info['messages_today'] >= 2:
+            send_this = False
+            reason = "daily_limit_reached"
+        else:
+            send_this = True
+            reason = "sent"
+        
+        # Meal type configuration
+        meal_config = {
+            'breakfast': {'emoji': '🌅', 'name': 'Sarapan'},
+            'lunch': {'emoji': '🌞', 'name': 'Makan Siang'},
+            'dinner': {'emoji': '🌙', 'name': 'Makan Malam'},
+            'snack': {'emoji': '🍎', 'name': 'Cemilan'}
+        }
+        
+        meal_info = meal_config.get(meal_type, {'emoji': '🍽️', 'name': 'Makan'})
+        
+        # Create reminder message
+        remaining = 2 - user_info['messages_today'] if user_info['tier'] == 'free' else 'unlimited'
+        
+        # FIXED: Use proper string formatting without extra indentation
+        message = f"""{meal_info['emoji']} **Pengingat: {meal_info['name']}**
+    
+    ⏰ Waktunya makan!
+    
+    🚀 **Respons cepat:**
+    - `done makan` - Sudah selesai makan
+    - `snooze 30` - Tunda 30 menit  
+    - `skip reminder` - Lewati
+    
+    📊 Sisa pengingat hari ini: {remaining}
+    
+    💡 Catat makanan: `catat mpasi`"""
+    
+        if send_this:
+            success = send_twilio_message(user, message)
+            if success:
+                app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_sent',
+                    success=True,
+                    details={
+                        'reminder_id': reminder_id,
+                        'meal_type': meal_type,
+                        'reminder_name': reminder_name,
+                        'time': TimezoneHandler.now_local(user).strftime('%H:%M')
+                    }
+                )
+                increment_message_count(user)
+            else:
+                app_logger.log_user_action(
+                    user_id=user,
+                    action='meal_reminder_send_failed',
+                    success=False,
+                    details={'reminder_id': reminder_id, 'meal_type': meal_type}
+                )
+        else:
+            app_logger.log_user_action(
+                user_id=user,
+                action='meal_reminder_skipped',
+                success=True,
+                details={
+                    'reminder_id': reminder_id,
+                    'reason': reason,
+                    'time': TimezoneHandler.now_local(user).strftime('%H:%M')
+                }
+            )
+        
+        # Calculate next reminder time
+        days_list = json.loads(days_of_week) if days_of_week else None
+        self._update_meal_reminder_next_due(user, reminder_id, reminder_time, days_list)
+            
+    def _update_meal_reminder_next_due(self, user: str, reminder_id: int, 
+                                       reminder_time: str, days_of_week: list):
+        """Update meal reminder next due time"""
+        try:
+            from datetime import timedelta
+            
+            current_local = TimezoneHandler.now_local(user)
+            hour, minute = map(int, reminder_time.split(':'))
+            
+            # Start from tomorrow
+            next_due_local = (current_local + timedelta(days=1)).replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            
+            # Find next valid day if days_of_week is specified
+            if days_of_week:
+                max_attempts = 7
+                for _ in range(max_attempts):
+                    day_abbr = next_due_local.strftime('%a').lower()[:3]
+                    if day_abbr in days_of_week:
+                        break
+                    next_due_local += timedelta(days=1)
+            
+            # Convert to UTC for database
+            next_due_utc = TimezoneHandler.to_utc(next_due_local, user).replace(tzinfo=None)
+            
+            # Update in database
+            database_url = os.environ.get('DATABASE_URL')
+            table_name = DatabaseSecurity.validate_table_name('meal_reminders')
+            
+            with db_pool.get_connection() as conn:
+                c = conn.cursor()
+                if database_url:
+                    c.execute(f'''
+                        UPDATE {table_name} 
+                        SET next_due=%s, last_sent=%s 
+                        WHERE id=%s
+                    ''', (next_due_utc, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
+                else:
+                    c.execute(f'''
+                        UPDATE {table_name} 
+                        SET next_due=?, last_sent=? 
+                        WHERE id=?
+                    ''', (next_due_utc, TimezoneHandler.now_utc().replace(tzinfo=None), reminder_id))
+            
+        except Exception as e:
+            app_logger.log_error(e, context={
+                'function': '_update_meal_reminder_next_due',
+                'reminder_id': reminder_id
+            })
+
     
     def _time_in_range(self, start_str: str, end_str: str, check_time: datetime) -> bool:
         """Check if check_time is within start and end time range"""
