@@ -204,6 +204,7 @@ async def initialize_handlers():
         from handlers.reminder_handler import ReminderHandler
         from handlers.summary_handler import SummaryHandler
         from handlers.meal_reminder_handler import MealReminderHandler  # ADD THIS
+        from handlers.onboarding_handler import OnboardingHandler
         
         child_handler = ChildHandler(session_manager, logger)
         feeding_handler = FeedingHandler(session_manager, logger)
@@ -211,6 +212,8 @@ async def initialize_handlers():
         reminder_handler = ReminderHandler(session_manager, logger)
         summary_handler = SummaryHandler(session_manager, logger)
         meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
+        onboarding_handler = OnboardingHandler(session_manager, logger)
+
         
         logger.info("All handlers initialized successfully")
         
@@ -448,6 +451,10 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     # Summary
     elif "summary" in msg or "ringkasan" in msg:
         return summary_handler.handle_summary_commands(user, message)
+
+    # CHECK IF NEW USER - TRIGGER ONBOARDING
+    if onboarding_handler.is_new_user(user):
+        return onboarding_handler.handle_onboarding(user, message)
     
     # Unknown
     resp = MessagingResponse()
