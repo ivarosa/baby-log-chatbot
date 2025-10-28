@@ -20,87 +20,38 @@ import re
 
 
 class FeedingHandler:
-    """Handle all feeding-related operations"""
+    """Handle all feeding-related operations - OPTIMIZED"""
     
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
         self.logger = logger
         
-        # Create a mock app_logger to handle all the app_logger calls
         class MockAppLogger:
             def log_user_action(self, **kwargs):
                 logger.info(f"User action: {kwargs}")
-            
             def log_error(self, error, **kwargs):
                 logger.error(f"Error: {error}, {kwargs}")
                 return f"ERROR_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         self.app_logger = MockAppLogger()
     
-    def handle_feeding_commands(self, user: str, message: str) -> Response:
-        """Route feeding commands to appropriate handlers"""
-        session = self.session_manager.get_session(user)
-        
-        # DEBUG
-        print(f"DEBUG: message='{message}', message.lower()='{message.lower()}', session_state='{session.get('state')}'")
-        
-        # Summary commands - Check first to prevent conflicts with session states
-        if message.lower().startswith("lihat ringkasan"):
-            return self.handle_summary_requests(user, message)
-        
-        # MPASI-related commands
-        elif (message.lower() == "catat mpasi" or 
-              session["state"] and session["state"].startswith("MPASI")):
-            return self.handle_mpasi_logging(user, message)
-        
-        # Milk intake commands
-        elif (message.lower() == "catat susu" or 
-              session["state"] and session["state"].startswith("MILK")):
-            return self.handle_milk_logging(user, message)
-        
-        # Pumping commands
-        elif (message.lower() == "catat pumping" or 
-              session["state"] and session["state"].startswith("PUMP")):
-            return self.handle_pumping_logging(user, message)
-        
-        # Calorie calculation
-        elif (message.lower() == "hitung kalori susu" or 
-              session["state"] and session["state"].startswith("CALC")):
-            return self.handle_calorie_calculation(user, message)
-        
-        # Calorie settings
-        elif (message.lower().startswith("set kalori") or
-              message.lower() == "lihat kalori" or
-              session["state"] and session["state"].startswith("SET_KALORI")):
-            return self.handle_calorie_settings(user, message)
-        
-        # Health tracking (poop)
-        elif (message.lower() in ["log poop", "catat bab"] or
-              message.lower() in ["show poop log", "lihat riwayat bab"] or
-              session["state"] and session["state"].startswith("POOP")):
-            return self.handle_health_tracking(user, message)
-        
-        else:
-            return self._handle_unknown_feeding_command(user, message)
-    
     def handle_mpasi_logging(self, user: str, message: str) -> Response:
-        """Handle MPASI logging flow"""
+        """Handle MPASI logging flow - OPTIMIZED"""
         session = self.session_manager.get_session(user)
         resp = MessagingResponse()
         
         try:
             if message.lower() == "catat mpasi":
-                # Start MPASI logging flow
                 session["state"] = "MPASI_DATE"
                 session["data"] = {}
-                reply = "Tanggal makan? (YYYY-MM-DD, atau ketik 'today')"
+                reply = "Tanggal (YYYY-MM-DD atau 'today')?"  # OPTIMIZED: Shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_DATE":
                 if message.lower().strip() == "today":
                     session["data"]["date"] = datetime.now().strftime("%Y-%m-%d")
                     session["state"] = "MPASI_TIME"
-                    reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
+                    reply = "Jam (HH:MM)?"  # OPTIMIZED: Much shorter
                 else:
                     is_valid, error_msg = InputValidator.validate_date(message)
                     if not is_valid:
@@ -108,7 +59,7 @@ class FeedingHandler:
                     else:
                         session["data"]["date"] = message
                         session["state"] = "MPASI_TIME"
-                        reply = "Jam makan? (format 24 jam, HH:MM, contoh: 07:30)"
+                        reply = "Jam (HH:MM)?"  # OPTIMIZED: Much shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_TIME":
@@ -119,7 +70,7 @@ class FeedingHandler:
                 else:
                     session["data"]["time"] = time_input
                     session["state"] = "MPASI_VOL"
-                    reply = "Berapa ml yang dimakan?"
+                    reply = "Volume (ml)?"  # OPTIMIZED: Much shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_VOL":
@@ -129,19 +80,19 @@ class FeedingHandler:
                 else:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "MPASI_DETAIL"
-                    reply = "Makanan apa saja? (contoh: nasi 50gr, ayam 30gr, wortel 20gr)"
+                    reply = "Makanan apa?"  # OPTIMIZED: Much shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_DETAIL":
                 session["data"]["food_detail"] = InputValidator.sanitize_text_input(message, 200)
                 session["state"] = "MPASI_GRAMS"
-                reply = "Masukkan menu dan porsi MPASI untuk estimasi kalori (misal: nasi santan 5 sdm, ayam 1 potong), atau 'skip'."
+                reply = "Menu & porsi untuk kalori (atau 'skip')?"  # OPTIMIZED: Shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MPASI_GRAMS":
                 if message.lower() != "skip":
                     session["data"]["food_grams"] = message
-                    session["data"]["est_calories"] = None  # Will be updated by GPT
+                    session["data"]["est_calories"] = None
                 else:
                     session["data"]["food_grams"] = ""
                     session["data"]["est_calories"] = None
@@ -149,19 +100,14 @@ class FeedingHandler:
                 try:
                     save_mpasi(user, session["data"])
                     
-                    # Log successful MPASI entry
-                    self.logger.info(f"User action: user_id={user}, action='mpasi_logged', success=True, "
-                                   f"details={{'volume_ml': {session['data']['volume_ml']}, "
-                                   f"'food_detail': '{session['data']['food_detail']}'}}")
+                    self.logger.info(f"User action: user_id={user}, action='mpasi_logged', success=True")
                     
+                    # OPTIMIZED: Single consolidated success message
                     reply = (
-                        f"✅ Catatan MPASI tersimpan!\n\n"
-                        f"Detail:\n"
-                        f"• Tanggal: {session['data']['date']}\n"
-                        f"• Jam: {session['data']['time']}\n"
-                        f"• Volume: {session['data']['volume_ml']} ml\n"
-                        f"• Makanan: {session['data']['food_detail']}\n\n"
-                        f"Ketik 'lihat ringkasan mpasi' untuk melihat ringkasan lengkap."
+                        f"✅ MPASI tersimpan!\n"
+                        f"• {session['data']['time']}: {session['data']['volume_ml']}ml\n"
+                        f"• {session['data']['food_detail'][:40]}...\n\n"
+                        f"Ketik 'lihat ringkasan mpasi'"
                     )
                     
                     session["state"] = None
@@ -169,27 +115,26 @@ class FeedingHandler:
                     
                 except (ValueError, ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.logger.info(f"User action: user_id={user}, action='mpasi_logged', success=False, "
-                                   f"details={{'error': '{str(e)}'}}")
+                    self.logger.info(f"User action: user_id={user}, action='mpasi_logged', success=False")
                 except Exception as e:
                     error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_mpasi'})
-                    reply = f"❌ Terjadi kesalahan saat menyimpan data MPASI. Kode error: {error_id}"
+                    reply = f"❌ Error: {error_id}"  # OPTIMIZED: Shorter
                 
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
             else:
-                reply = "Perintah tidak dikenali dalam konteks MPASI."
+                reply = "❓ Perintah tidak dikenali"  # OPTIMIZED: Much shorter
             
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
             
         except Exception as e:
             error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_mpasi_logging'})
-            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
+            resp.message(f"❌ Error: {error_id}")  # OPTIMIZED: Shorter
             return Response(str(resp), media_type="application/xml")
     
     def handle_milk_logging(self, user: str, message: str) -> Response:
-        """Handle milk intake logging flow"""
+        """Handle milk intake logging flow - OPTIMIZED"""
         session = self.session_manager.get_session(user)
         resp = MessagingResponse()
         
@@ -197,7 +142,7 @@ class FeedingHandler:
             if message.lower() == "catat susu":
                 session["state"] = "MILK_DATE"
                 session["data"] = {}
-                reply = "Tanggal minum susu? (YYYY-MM-DD atau 'today')"
+                reply = "Tanggal (YYYY-MM-DD atau 'today')?"  # OPTIMIZED: Shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_DATE":
@@ -212,7 +157,7 @@ class FeedingHandler:
                     session["data"]["date"] = message
                 
                 session["state"] = "MILK_TIME"
-                reply = "Jam berapa minum susu? (format 24 jam, HH:MM, contoh: 09:00)"
+                reply = "Jam (HH:MM)?"  # OPTIMIZED: Much shorter
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_TIME":
@@ -223,7 +168,7 @@ class FeedingHandler:
                 else:
                     session["data"]["time"] = time_input
                     session["state"] = "MILK_VOL"
-                    reply = "Berapa ml yang diminum?"
+                    reply = "Volume (ml)?"  # OPTIMIZED: Much shorter
                     self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_VOL":
@@ -233,7 +178,7 @@ class FeedingHandler:
                 else:
                     session["data"]["volume_ml"] = float(message)
                     session["state"] = "MILK_TYPE"
-                    reply = "Susu apa yang diminum?\n• 'asi' untuk ASI\n• 'sufor' untuk susu formula"
+                    reply = "Jenis: asi/sufor?"  # OPTIMIZED: Much shorter
                     self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
             elif session["state"] == "MILK_TYPE":
@@ -241,46 +186,42 @@ class FeedingHandler:
                 if milk_type == "asi":
                     session["data"]["milk_type"] = "asi"
                     session["state"] = "ASI_METHOD"
-                    reply = "ASI diberikan bagaimana?\n• 'dbf' untuk direct breastfeeding\n• 'pumping' untuk hasil perahan"
+                    reply = "Metode: dbf/pumping?"  # OPTIMIZED: Much shorter
                     self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 elif milk_type == "sufor":
                     session["data"]["milk_type"] = "sufor"
-                    # Calculate calories automatically
                     try:
                         user_kcal = get_user_calorie_setting(user)
                         session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
                         session["state"] = "MILK_NOTE"
-                        reply = (
-                            f"✅ Kalori otomatis dihitung: {session['data']['sufor_calorie']:.2f} kkal\n\n"
-                            f"Catatan tambahan? (atau ketik 'skip')"
-                        )
+                        # OPTIMIZED: Shorter confirmation
+                        reply = f"✅ Kalori: {session['data']['sufor_calorie']:.1f} kkal\n\nCatatan? ('skip' jika tidak)"
                         self.session_manager.update_session(user, state=session["state"], data=session["data"])
                     except Exception as e:
-                        error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'get_calorie_setting'})
-                        reply = f"❌ Gagal menghitung kalori. Kode error: {error_id}"
+                        error_id = self.app_logger.log_error(e, user_id=user)
+                        reply = f"❌ Error: {error_id}"  # OPTIMIZED: Shorter
                 else:
-                    reply = "❌ Masukkan 'asi' untuk ASI atau 'sufor' untuk susu formula."
+                    reply = "❌ Ketik: asi/sufor"  # OPTIMIZED: Much shorter
                 
             elif session["state"] == "ASI_METHOD":
                 method = message.lower()
                 if method in ["dbf", "pumping"]:
                     session["data"]["asi_method"] = method
                     session["state"] = "MILK_NOTE"
-                    reply = "Catatan tambahan? (atau ketik 'skip')"
+                    reply = "Catatan? ('skip' jika tidak)"  # OPTIMIZED: Shorter
                     self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 else:
-                    reply = "❌ Masukkan 'dbf' untuk direct breastfeeding atau 'pumping' untuk hasil perahan."
+                    reply = "❌ Ketik: dbf/pumping"  # OPTIMIZED: Much shorter
                 
             elif session["state"] == "MILK_NOTE":
-                # Check if the message is a summary request instead of a note
+                # Check if summary request
                 if message.lower().startswith("lihat ringkasan"):
-                    # Handle summary request instead of treating as note
                     return self.handle_summary_requests(user, message)
                 
                 note_text = "" if message.lower() == "skip" else InputValidator.sanitize_text_input(message, 200)
                 session["data"]["note"] = note_text
                 
-                # Ensure sufor_calorie is set for sufor entries
+                # Ensure sufor_calorie is set
                 if session["data"].get("milk_type") == "sufor" and "sufor_calorie" not in session["data"]:
                     user_kcal = get_user_calorie_setting(user)
                     session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
@@ -288,50 +229,42 @@ class FeedingHandler:
                 try:
                     save_milk_intake(user, session["data"])
                     
-                    # Log successful milk intake
-                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=True, "
-                                   f"details={{'volume_ml': {session['data']['volume_ml']}, "
-                                   f"'milk_type': '{session['data'].get('milk_type', 'unknown')}', "
-                                   f"'calories': {session['data'].get('sufor_calorie', 0)}}}")
+                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=True")
                     
-                    extra = ""
+                    # OPTIMIZED: Single consolidated success message
                     milk_type = session["data"].get("milk_type", "unknown")
+                    extra = ""
                     if milk_type == "sufor":
-                        extra = f" (kalori: {session['data'].get('sufor_calorie', 0):.2f} kkal)"
+                        extra = f" ({session['data'].get('sufor_calorie', 0):.1f} kkal)"
                     elif milk_type == "asi":
                         extra = f" ({session['data'].get('asi_method','')})"
                     
                     reply = (
-                        f"✅ Catatan minum susu tersimpan!\n\n"
-                        f"Detail:\n"
-                        f"• Jam: {session['data']['time']}\n"
-                        f"• Volume: {session['data']['volume_ml']} ml\n"
-                        f"• Jenis: {milk_type.upper()}{extra}\n"
-                        f"• Catatan: {session['data']['note'] or '-'}\n\n"
-                        f"Ketik 'lihat ringkasan susu' untuk melihat ringkasan harian."
+                        f"✅ Susu tersimpan!\n"
+                        f"• {session['data']['time']}: {session['data']['volume_ml']}ml {milk_type.upper()}{extra}\n\n"
+                        f"Ketik 'lihat ringkasan susu'"
                     )
                     session["state"] = None
                     session["data"] = {}
                     
                 except (ValueError, ValidationError) as e:
                     reply = f"❌ {str(e)}"
-                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=False, "
-                                   f"details={{'error': '{str(e)}'}}")
+                    self.logger.info(f"User action: user_id={user}, action='milk_logged', success=False")
                 except Exception as e:
-                    error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'save_milk_intake'})
-                    reply = f"❌ Terjadi kesalahan saat menyimpan data susu. Kode error: {error_id}"
+                    error_id = self.app_logger.log_error(e, user_id=user)
+                    reply = f"❌ Error: {error_id}"  # OPTIMIZED: Shorter
                 
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
             
             else:
-                reply = "Perintah tidak dikenali dalam konteks susu."
+                reply = "❓ Perintah tidak dikenali"  # OPTIMIZED: Much shorter
             
             resp.message(reply)
             return Response(str(resp), media_type="application/xml")
             
         except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': 'handle_milk_logging'})
-            resp.message(f"❌ Terjadi kesalahan sistem. Kode error: {error_id}")
+            error_id = self.app_logger.log_error(e, user_id=user)
+            resp.message(f"❌ Error: {error_id}")  # OPTIMIZED: Shorter
             return Response(str(resp), media_type="application/xml")
     
     def handle_calorie_settings(self, user: str, message: str) -> Response:
@@ -814,18 +747,17 @@ class FeedingHandler:
             return f"❌ Gagal mengambil ringkasan MPASI. Kode error: {error_id}"
 
     def _generate_milk_summary(self, user: str, date: str) -> str:
-        """Generate milk summary for given date, robust to missing keys."""
+        """Generate milk summary - OPTIMIZED"""
         try:
             rows = get_milk_intake_summary(user, date, date)
             if not rows:
-                return f"Belum ada catatan minum susu/ASI pada {date}.\n\nKetik 'catat susu' untuk menambah data."
+                return f"Belum ada catatan susu/ASI.\n\nKetik 'catat susu'"  # OPTIMIZED: Shorter
 
             total_count = 0
             total_ml = 0
             total_cal = 0
 
             for r in rows:
-                # r can be tuple/list or dict
                 if isinstance(r, (list, tuple)):
                     total_count += r[2] if len(r) > 2 and r[2] else 0
                     total_ml += r[3] if len(r) > 3 and r[3] else 0
@@ -834,84 +766,67 @@ class FeedingHandler:
                     total_count += r.get("count", 0)
                     total_ml += r.get("volume_ml", 0)
                     total_cal += r.get("calories", 0)
-                else:
-                    continue
 
+            # OPTIMIZED: Much shorter summary format
             reply = (
-                f"Ringkasan Susu/ASI ({date})\n\n"
-                f"• Total sesi minum: {total_count}\n"
-                f"• Total volume: {total_ml} ml\n"
-                f"• Total kalori: {total_cal:.1f} kkal\n\n"
-                f"Detail per jenis:\n"
+                f"🍼 Ringkasan Susu ({date})\n\n"
+                f"• {total_count} sesi\n"
+                f"• {total_ml} ml\n"
+                f"• {total_cal:.0f} kkal\n\n"
             )
 
+            # OPTIMIZED: Condensed detail section
             for r in rows:
                 if isinstance(r, (list, tuple)):
                     milk_type = r[0] if len(r) > 0 else "-"
-                    asi_method = r[1] if len(r) > 1 else ""
                     count = r[2] if len(r) > 2 else 0
                     volume = r[3] if len(r) > 3 else 0
-                    calories = r[4] if len(r) > 4 and r[4] else 0
                 elif isinstance(r, dict):
                     milk_type = r.get("milk_type", "-")
-                    asi_method = r.get("asi_method", "")
                     count = r.get("count", 0)
                     volume = r.get("volume_ml", 0)
-                    calories = r.get("calories", 0)
-                else:
-                    continue
 
-                if milk_type == 'asi':
-                    method_text = f" ({asi_method})" if asi_method else ""
-                    reply += f"• ASI{method_text}: {count}x, {volume} ml\n"
-                else:
-                    reply += f"• Sufor: {count}x, {volume} ml ({calories:.1f} kkal)\n"
+                reply += f"• {milk_type.upper()}: {count}x, {volume}ml\n"
 
             return reply
         except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_milk_summary'})
-            return f"❌ Gagal mengambil ringkasan susu. Kode error: {error_id}"
+            error_id = self.app_logger.log_error(e, user_id=user)
+            return f"❌ Error: {error_id}"  # OPTIMIZED: Shorter
 
-    def _generate_pumping_summary(self, user: str, date: str) -> str:
-        """Generate pumping summary for given date"""
+    def _generate_mpasi_summary(self, user: str, date: str) -> str:
+        """Generate MPASI summary - OPTIMIZED"""
         try:
-            rows = get_pumping_summary(user, date, date)
+            rows = get_mpasi_summary(user, date, date)
             if not rows:
-                return f"Belum ada catatan pumping pada {date}.\n\nKetik 'catat pumping' untuk menambah data."
+                return f"Belum ada catatan MPASI.\n\nKetik 'catat mpasi'"  # OPTIMIZED: Shorter
             
-            total_sessions = len(rows)
-            total_left = sum([row[2] or 0 for row in rows])
-            total_right = sum([row[3] or 0 for row in rows])
-            total_ml = total_left + total_right
-            total_bags = sum([row[4] or 0 for row in rows])
+            total_ml = sum([row[2] or 0 for row in rows])
+            total_cal = sum([row[5] or 0 for row in rows])
             
+            # OPTIMIZED: Much shorter format
             reply = (
-                f"Ringkasan Pumping ({date})\n\n"
-                f"• Total sesi: {total_sessions}\n"
-                f"• Total ASI: {total_ml} ml\n"
-                f"• Payudara kiri: {total_left} ml\n"
-                f"• Payudara kanan: {total_right} ml\n"
-                f"• Total kantong: {total_bags}\n\n"
-                f"Detail per sesi:\n"
+                f"🍽️ Ringkasan MPASI ({date})\n\n"
+                f"• {len(rows)} sesi\n"
+                f"• {total_ml} ml\n"
+                f"• {total_cal} kkal\n\n"
             )
             
-            for i, row in enumerate(rows[:5], 1):  # Show last 5 sessions
+            # OPTIMIZED: Show only top 3 entries
+            for i, row in enumerate(rows[:3], 1):
                 time_val = row[1] if len(row) > 1 else '-'
-                left_ml = row[2] if len(row) > 2 else 0
-                right_ml = row[3] if len(row) > 3 else 0
-                bags = row[4] if len(row) > 4 else 0
-                session_total = left_ml + right_ml
+                volume = row[2] if len(row) > 2 else 0
+                food = row[3] if len(row) > 3 else ''
                 
-                reply += f"{i}. {time_val} - {session_total}ml (L:{left_ml}, R:{right_ml}, Kantong:{bags})\n"
+                reply += f"{i}. {time_val}: {volume}ml\n"
             
-            if len(rows) > 5:
-                reply += f"\n... dan {len(rows) - 5} sesi lainnya"
+            if len(rows) > 3:
+                reply += f"\n...+{len(rows) - 3} sesi lagi"
             
             return reply
             
         except Exception as e:
-            error_id = self.app_logger.log_error(e, user_id=user, context={'function': '_generate_pumping_summary'})
-            return f"❌ Gagal mengambil ringkasan pumping. Kode error: {error_id}"
+            error_id = self.app_logger.log_error(e, user_id=user)
+            return f"❌ Error: {error_id}"  # OPTIMIZED: Shorter
     
     def _generate_calorie_summary(self, user: str, date: str) -> str:
         """Generate calorie summary from all sources, robust to missing keys."""
