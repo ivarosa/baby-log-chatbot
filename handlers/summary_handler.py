@@ -376,64 +376,49 @@ class SummaryHandler:
         }
     
     def _format_daily_summary(self, data: dict, summary_date: str, user: str) -> str:
-        """Format daily summary message"""
+        """Format daily summary message - OPTIMIZED TO SINGLE MESSAGE"""
         try:
-            # Check if it's today
             is_today = summary_date == datetime.now().strftime("%Y-%m-%d")
             date_display = "Hari Ini" if is_today else summary_date
             
-            # Format sleep duration
+            # OPTIMIZED: Single consolidated message instead of multiple sections
             sleep_hours, sleep_mins = divmod(int(data['sleep']['total_minutes']), 60)
-            sleep_duration = f"{sleep_hours}j {sleep_mins}m" if data['sleep']['sessions'] > 0 else "-"
+            sleep_str = f"{sleep_hours}j{sleep_mins}m" if data['sleep']['sessions'] > 0 else "-"
             
-            lines = [
-                f"📊 **Ringkasan Aktivitas Bayi ({date_display})**\n",
-                f"🍽️ **Makan & Minum:**",
-                f"• MPASI: {data['mpasi']['count']}x, {data['mpasi']['total_ml']} ml ({data['mpasi']['calories']} kkal)",
-                f"• Susu/ASI: {data['milk']['count']}x, {data['milk']['total_ml']} ml ({data['milk']['calories']:.1f} kkal)",
-                f"• Total kalori: {data['total_calories']:.1f} kkal\n",
-                
-                f"🤱 **ASI & Pumping:**",
-                f"• Sesi pumping: {data['pumping']['sessions']}x",
-                f"• Total ASI perah: {data['pumping']['total_ml']} ml",
-                f"• Kantong disimpan: {data['pumping']['bags']}\n",
-                
-                f"😴 **Tidur:**",
-                f"• Sesi tidur: {data['sleep']['sessions']}x",
-                f"• Total durasi: {sleep_duration}\n",
-                
-                f"💩 **Kesehatan:**",
-                f"• BAB: {data['poop']['count']}x\n"
-            ]
+            # Build everything in ONE message
+            lines = [f"📊 Ringkasan {date_display}\n"]
             
-            # Add recommendations based on data
-            recommendations = self._generate_daily_recommendations(data, is_today)
-            if recommendations:
-                lines.append(f"💡 **Rekomendasi:**\n{recommendations}")
+            # Core stats in compact format
+            lines.append(
+                f"🍽️ MPASI: {data['mpasi']['count']}x, {data['mpasi']['total_ml']}ml\n"
+                f"🍼 Susu: {data['milk']['count']}x, {data['milk']['total_ml']}ml\n"
+                f"🔥 Kalori: {data['total_calories']:.0f} kkal\n"
+                f"😴 Tidur: {data['sleep']['sessions']}x, {sleep_str}\n"
+                f"💩 BAB: {data['poop']['count']}x"
+            )
             
-            # Add tier-based features info
-            limits = get_tier_limits(user)
-            if limits.get("history_days"):  # Free user
-                lines.append(f"📱 Tier gratis - Riwayat {limits['history_days']} hari")
-                lines.append(f"💎 Upgrade premium untuk analisis lanjutan")
+            # OPTIMIZED: Only add recommendations if critical
+            if data['total_calories'] < 300:
+                lines.append("\n\n⚠️ Kalori rendah - tambah asupan")
+            elif data['total_calories'] > 1000:
+                lines.append("\n\n✅ Asupan kalori tinggi")
             
-            # Add quick action suggestions
+            # OPTIMIZED: Only add action prompts if needed and TODAY
             if is_today:
-                lines.append(f"\n🔗 **Aksi Cepat:**")
+                actions = []
                 if data['mpasi']['count'] == 0:
-                    lines.append(f"• `catat mpasi` - Log makanan")
+                    actions.append("'catat mpasi'")
                 if data['milk']['count'] == 0:
-                    lines.append(f"• `catat susu` - Log susu/ASI")
-                if data['sleep']['sessions'] == 0:
-                    lines.append(f"• `catat tidur` - Mulai tracking tidur")
+                    actions.append("'catat susu'")
                 
-                lines.append(f"• `lihat ringkasan [jenis]` - Detail per kategori")
+                if actions:
+                    lines.append(f"\n\n💡 Belum: {', '.join(actions)}")
             
             return "\n".join(lines)
             
         except Exception as e:
             self.app_logger.log_error(e, context={'function': '_format_daily_summary'})
-            return f"❌ Error formatting summary for {summary_date}"
+            return f"❌ Error summary untuk {summary_date}"  # OPTIMIZED: Shorter
     
     def _generate_daily_recommendations(self, data: dict, is_today: bool) -> str:
         """Generate recommendations based on daily data"""
@@ -494,53 +479,31 @@ class SummaryHandler:
             return {'date_range': '', 'daily_summaries': []}
     
     def _format_weekly_summary(self, data: dict, start_date: date, end_date: date, user: str) -> str:
-        """Format weekly summary message"""
+        """Format weekly summary - OPTIMIZED"""
         try:
             if not data['daily_summaries']:
-                return f"📊 **Ringkasan Mingguan**\n\nBelum ada data untuk periode {start_date} - {end_date}."
+                return f"📊 Belum ada data minggu ini"  # OPTIMIZED: Much shorter
             
             # Calculate weekly totals
             total_mpasi = sum([d['mpasi']['count'] for d in data['daily_summaries']])
             total_milk = sum([d['milk']['count'] for d in data['daily_summaries']])
             total_calories = sum([d['total_calories'] for d in data['daily_summaries']])
-            total_sleep_hours = sum([d['sleep']['total_minutes'] for d in data['daily_summaries']]) / 60
-            avg_daily_calories = total_calories / 7 if total_calories > 0 else 0
+            total_sleep = sum([d['sleep']['total_minutes'] for d in data['daily_summaries']]) / 60
             
-            lines = [
-                f"📊 **Ringkasan Mingguan ({start_date.strftime('%d/%m')} - {end_date.strftime('%d/%m')})**\n",
-                f"📈 **Total Minggu Ini:**",
-                f"• MPASI: {total_mpasi} sesi",
-                f"• Susu/ASI: {total_milk} sesi", 
-                f"• Total kalori: {total_calories:.0f} kkal",
-                f"• Total tidur: {total_sleep_hours:.1f} jam\n",
-                
-                f"📊 **Rata-rata Harian:**",
-                f"• Kalori: {avg_daily_calories:.0f} kkal/hari",
-                f"• Tidur: {total_sleep_hours/7:.1f} jam/hari\n",
-                
-                f"📋 **Rincian Harian:**"
-            ]
-            
-            # Add daily breakdown
-            for daily in data['daily_summaries']:
-                date_obj = datetime.strptime(daily['date'], '%Y-%m-%d').date()
-                if date_obj == datetime.now().date():
-                    day_label = "Hari ini"
-                elif date_obj == datetime.now().date() - timedelta(days=1):
-                    day_label = "Kemarin"
-                else:
-                    day_label = date_obj.strftime('%d/%m')
-                
-                lines.append(f"• {day_label}: {daily['total_calories']:.0f} kkal, "
-                           f"{daily['mpasi']['count']}x MPASI, {daily['milk']['count']}x susu")
-            
-            lines.append(f"\n💎 Fitur premium: Grafik tren, analisis pola, rekomendasi personal")
-            
-            return "\n".join(lines)
+            # OPTIMIZED: Single consolidated message
+            return (
+                f"📊 Ringkasan Minggu ({start_date.strftime('%d/%m')}-{end_date.strftime('%d/%m')})\n\n"
+                f"• MPASI: {total_mpasi} sesi\n"
+                f"• Susu: {total_milk} sesi\n"
+                f"• Kalori: {total_calories:.0f} kkal\n"
+                f"• Tidur: {total_sleep:.0f} jam\n"
+                f"• Rata-rata: {total_calories/7:.0f} kkal/hari\n\n"
+                f"💎 Upgrade untuk grafik detail"
+            )
             
         except Exception as e:
             self.app_logger.log_error(e, context={'function': '_format_weekly_summary'})
-            return f"❌ Error formatting weekly summary"
+            return f"❌ Error weekly summary"  # OPTIMIZED: Shorter
     
     def _get_monthly_summary_data(self, user: str, start_date: date, end_date: date) -> dict:
         """Get monthly summary data"""
@@ -675,57 +638,30 @@ class SummaryHandler:
             }
     
     def _format_nutrition_summary(self, data: dict, date: str, user: str) -> str:
-        """Format nutrition summary message"""
+        """Format nutrition summary - OPTIMIZED"""
         try:
             is_today = date == datetime.now().strftime("%Y-%m-%d")
             date_display = "Hari Ini" if is_today else date
             
             if data['total_calories'] == 0:
-                return (
-                    f"🔥 **Ringkasan Nutrisi ({date_display})**\n\n"
-                    f"Belum ada catatan asupan untuk hari ini.\n\n"
-                    f"**Mulai mencatat:**\n"
-                    f"• `catat mpasi` - untuk makanan\n"
-                    f"• `catat susu` - untuk ASI/sufor\n\n"
-                    f"💡 Tracking nutrisi membantu monitor pertumbuhan optimal bayi."
-                )
+                return f"🔥 Belum ada catatan nutrisi.\n\nKetik 'catat mpasi' atau 'catat susu'"  # OPTIMIZED: Shorter
             
-            # Calculate percentages
+            # OPTIMIZED: Compact format
             mpasi_pct = (data['mpasi_calories'] / data['total_calories'] * 100) if data['total_calories'] > 0 else 0
             milk_pct = (data['total_milk_calories'] / data['total_calories'] * 100) if data['total_calories'] > 0 else 0
             
-            lines = [
-                f"🔥 **Ringkasan Nutrisi ({date_display})**\n",
-                f"📊 **Total Kalori: {data['total_calories']:.1f} kkal**\n",
-                
-                f"🍽️ **MPASI:**",
-                f"• Kalori: {data['mpasi_calories']:.1f} kkal ({mpasi_pct:.1f}%)",
-                f"• Sesi makan: {data['mpasi_sessions']}x\n",
-                
-                f"🍼 **Susu & ASI:**",
-                f"• Total kalori: {data['total_milk_calories']:.1f} kkal ({milk_pct:.1f}%)",
-                f"• ASI: {data['asi_ml']} ml ({data['asi_calories']:.1f} kkal)",
-                f"• Sufor: {data['sufor_calories']:.1f} kkal",
-                f"• Sesi minum: {data['milk_sessions']}x\n",
-            ]
-            
-            # Add nutrition assessment
-            assessment = self._assess_nutrition(data, is_today)
-            if assessment:
-                lines.append(f"💡 **Penilaian:**\n{assessment}")
-            
-            # Add quick actions for today
-            if is_today:
-                lines.append(f"\n🔗 **Aksi Cepat:**")
-                lines.append(f"• `hitung kalori susu` - Kalkulator kalori")
-                lines.append(f"• `lihat kalori` - Pengaturan kalori")
-                lines.append(f"• `set kalori asi/sufor` - Ubah nilai kalori")
-            
-            return "\n".join(lines)
+            return (
+                f"🔥 Nutrisi {date_display}\n\n"
+                f"Total: {data['total_calories']:.0f} kkal\n\n"
+                f"• MPASI: {data['mpasi_calories']:.0f} ({mpasi_pct:.0f}%)\n"
+                f"• Susu: {data['total_milk_calories']:.0f} ({milk_pct:.0f}%)\n"
+                f"  - ASI: {data['asi_ml']}ml\n"
+                f"  - Sufor: {data['sufor_calories']:.0f} kkal"
+            )
             
         except Exception as e:
             self.app_logger.log_error(e, context={'function': '_format_nutrition_summary'})
-            return f"❌ Error formatting nutrition summary for {date}"
+            return f"❌ Error nutrition summary"  # OPTIMIZED: Shorter
     
     def _assess_nutrition(self, data: dict, is_today: bool) -> str:
         """Assess nutrition based on intake data"""
@@ -761,108 +697,84 @@ class SummaryHandler:
         return "\n".join([f"  • {assess}" for assess in assessments]) if assessments else ""
     
     def _format_growth_summary(self, growth_records: list, user: str) -> str:
-        """Format growth summary from records"""
+        """Format growth summary - OPTIMIZED"""
         try:
             latest_record = growth_records[0] if growth_records else None
             
-            lines = [
-                f"📈 **Ringkasan Pertumbuhan**\n",
-                f"📊 **Data Terbaru:**"
-            ]
+            if not latest_record:
+                return "📈 Belum ada data pertumbuhan.\n\nKetik 'catat timbang'"  # OPTIMIZED: Shorter
             
-            if latest_record:
-                # Handle both dict and tuple formats
-                if isinstance(latest_record, dict):
-                    date_val = latest_record.get('date', '-')
-                    height = latest_record.get('height_cm', 0)
-                    weight = latest_record.get('weight_kg', 0)
-                    head_circum = latest_record.get('head_circum_cm', 0)
+            # Extract data
+            if isinstance(latest_record, dict):
+                date_val = latest_record.get('date', '-')
+                height = latest_record.get('height_cm', 0)
+                weight = latest_record.get('weight_kg', 0)
+                head = latest_record.get('head_circum_cm', 0)
+            else:
+                date_val = latest_record[0] if len(latest_record) > 0 else '-'
+                height = latest_record[1] if len(latest_record) > 1 else 0
+                weight = latest_record[2] if len(latest_record) > 2 else 0
+                head = latest_record[3] if len(latest_record) > 3 else 0
+            
+            # OPTIMIZED: Compact format
+            reply = (
+                f"📈 Data Pertumbuhan\n\n"
+                f"Terbaru ({date_val}):\n"
+                f"• {height}cm, {weight}kg\n"
+                f"• Lingkar kepala: {head}cm\n"
+            )
+            
+            # Show trend if available
+            if len(growth_records) > 1:
+                prev = growth_records[1]
+                if isinstance(prev, dict):
+                    prev_weight = prev.get('weight_kg', 0)
+                    prev_height = prev.get('height_cm', 0)
                 else:
-                    date_val = latest_record[0] if len(latest_record) > 0 else '-'
-                    height = latest_record[1] if len(latest_record) > 1 else 0
-                    weight = latest_record[2] if len(latest_record) > 2 else 0
-                    head_circum = latest_record[3] if len(latest_record) > 3 else 0
+                    prev_weight = prev[2] if len(prev) > 2 else 0
+                    prev_height = prev[1] if len(prev) > 1 else 0
                 
-                lines.extend([
-                    f"• Tanggal: {date_val}",
-                    f"• Tinggi: {height} cm",
-                    f"• Berat: {weight} kg", 
-                    f"• Lingkar kepala: {head_circum} cm\n"
-                ])
+                w_diff = weight - prev_weight
+                h_diff = height - prev_height
                 
-                # Calculate growth trend if we have multiple records
-                if len(growth_records) > 1:
-                    lines.append(f"📈 **Tren Pertumbuhan:**")
-                    
-                    # Compare with previous record
-                    prev_record = growth_records[1]
-                    if isinstance(prev_record, dict):
-                        prev_weight = prev_record.get('weight_kg', 0)
-                        prev_height = prev_record.get('height_cm', 0)
-                    else:
-                        prev_weight = prev_record[2] if len(prev_record) > 2 else 0
-                        prev_height = prev_record[1] if len(prev_record) > 1 else 0
-                    
-                    weight_diff = weight - prev_weight
-                    height_diff = height - prev_height
-                    
-                    weight_trend = "📈" if weight_diff > 0 else "📉" if weight_diff < 0 else "➡️"
-                    height_trend = "📈" if height_diff > 0 else "📉" if height_diff < 0 else "➡️"
-                    
-                    lines.extend([
-                        f"• Berat: {weight_trend} {weight_diff:+.2f} kg",
-                        f"• Tinggi: {height_trend} {height_diff:+.1f} cm\n"
-                    ])
-                
-                # Show recent history
-                if len(growth_records) > 1:
-                    lines.append(f"📋 **Riwayat 5 Terakhir:**")
-                    for i, record in enumerate(growth_records[:5]):
-                        if isinstance(record, dict):
-                            r_date = record.get('date', '-')
-                            r_weight = record.get('weight_kg', 0)
-                            r_height = record.get('height_cm', 0)
-                        else:
-                            r_date = record[0] if len(record) > 0 else '-'
-                            r_weight = record[2] if len(record) > 2 else 0
-                            r_height = record[1] if len(record) > 1 else 0
-                        
-                        status = "🆕" if i == 0 else f"{i+1}."
-                        lines.append(f"  {status} {r_date}: {r_weight} kg, {r_height} cm")
-                
-                # Add tier information
-                limits = get_tier_limits(user)
-                if limits.get("growth_entries"):
-                    lines.append(f"\n📱 Tier gratis - Riwayat {limits['growth_entries']} entri")
-                    lines.append(f"💎 Upgrade premium untuk riwayat unlimited & grafik pertumbuhan")
-                
-                lines.extend([
-                    f"\n🔗 **Aksi Cepat:**",
-                    f"• `catat timbang` - Tambah data terbaru",
-                    f"• `lihat tumbuh kembang` - Lihat semua riwayat"
-                ])
+                reply += f"\nTren:\n• Berat: {w_diff:+.1f}kg\n• Tinggi: {h_diff:+.1f}cm"
             
-            return "\n".join(lines)
+            # OPTIMIZED: Show only 3 recent records
+            if len(growth_records) > 1:
+                reply += "\n\nRiwayat:"
+                for i, r in enumerate(growth_records[:3]):
+                    if isinstance(r, dict):
+                        r_date = r.get('date', '-')
+                        r_weight = r.get('weight_kg', 0)
+                        r_height = r.get('height_cm', 0)
+                    else:
+                        r_date = r[0]
+                        r_weight = r[2] if len(r) > 2 else 0
+                        r_height = r[1] if len(r) > 1 else 0
+                    
+                    reply += f"\n{i+1}. {r_date}: {r_weight}kg, {r_height}cm"
+                
+                if len(growth_records) > 3:
+                    reply += f"\n...+{len(growth_records)-3} lagi"
+            
+            return reply
             
         except Exception as e:
             self.app_logger.log_error(e, context={'function': '_format_growth_summary'})
-            return f"❌ Error formatting growth summary"
+            return f"❌ Error growth summary"  # OPTIMIZED: Shorter
     
     def _handle_unknown_summary_command(self, user: str, message: str) -> Response:
-        """Handle unknown summary commands"""
+        """Handle unknown summary commands - OPTIMIZED"""
         resp = MessagingResponse()
         
+        # OPTIMIZED: Much shorter help text
         reply = (
-            f"❓ **Perintah Summary Tidak Dikenali**\n\n"
-            f"**Perintah summary yang tersedia:**\n"
-            f"• `summary today` / `ringkasan hari ini`\n"
-            f"• `summary 2024-01-15` - Ringkasan tanggal tertentu\n"
-            f"• `growth summary` - Ringkasan pertumbuhan\n"
-            f"• `nutrition summary` - Ringkasan nutrisi\n\n"
-            f"**Premium features:**\n"
-            f"• `weekly summary` - Ringkasan mingguan\n"
-            f"• `monthly summary` - Laporan bulanan\n\n"
-            f"💡 Ketik `help` untuk bantuan lengkap"
+            f"❓ Perintah tidak dikenali\n\n"
+            f"Coba:\n"
+            f"• 'ringkasan hari ini'\n"
+            f"• 'growth summary'\n"
+            f"• 'nutrition summary'\n\n"
+            f"Ketik 'help' untuk lengkap"
         )
         
         resp.message(reply)
