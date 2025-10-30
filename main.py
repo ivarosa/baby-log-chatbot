@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from twilio.twiml.messaging_response import MessagingResponse
+from utils.rate_limiter import RateLimiter, CostTracker
 
 # Configure production logging FIRST
 logging.basicConfig(
@@ -150,6 +151,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize (around line 50, after db_pool):
+rate_limiter = RateLimiter()
+cost_tracker = CostTracker()
 
 # Mount static files with error handling
 try:
@@ -324,6 +329,13 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
             resp = MessagingResponse()
             resp.message("Invalid request")
             return Response(str(resp), media_type="application/xml")
+
+        # NEW: Check rate limit BEFORE processing
+        allowed, error_msg = rate_limiter.check_limit(user)
+        if not allowed:
+            resp = MessagingResponse()
+            resp.message(error_msg)
+            return Response(str(resp), media_type="application/xml")
         
         # Sanitize inputs
         from validators import InputValidator
@@ -331,6 +343,10 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         message = InputValidator.sanitize_text_input(message, 1000)
         
         logger.info(f"📨 Message from {user[:20]}...")
+        
+        cost_tracker.log_message(user)
+        
+        return result
         
     except Exception as e:
         logger.error(f"❌ Request parsing error: {e}")
@@ -460,6 +476,16 @@ async def route_new_command(user: str, message: str, background_tasks: Backgroun
     resp = MessagingResponse()
     resp.message("❓ Perintah tidak dikenali. Ketik 'help' untuk bantuan.")
     return Response(str(resp), media_type="application/xml")
+
+@app.get("/admin/costs")
+async def get_cost_stats():
+    """Get cost and usage statistics"""
+    return {
+        'daily_messages': cost_tracker.get_daily_count(),
+        'monthly_estimate': cost_tracker.estimate_monthly_cost(),
+        'top_users': cost_tracker.get_top_users(),
+        'cost_alerts': cost_tracker.check_cost_alert(monthly_budget=100.0)
+    }
 
 # Main entry point
 if __name__ == "__main__":
