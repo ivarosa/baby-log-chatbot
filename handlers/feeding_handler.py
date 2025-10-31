@@ -25,6 +25,7 @@ class FeedingHandler:
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
         self.logger = logger
+        self.cache = cache
         
         class MockAppLogger:
             def log_user_action(self, **kwargs):
@@ -34,6 +35,25 @@ class FeedingHandler:
                 return f"ERROR_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
         self.app_logger = MockAppLogger()
+
+    def _get_calorie_settings_cached(self, user: str) -> dict:
+        """Get calorie settings with caching"""
+        cache_key = f"{user}:calorie_settings"
+        
+        # Try cache first
+        if self.cache:
+            settings = self.cache.get(cache_key)
+            if settings:
+                return settings
+        
+        # Cache miss - query database
+        settings = get_user_calorie_setting(user)
+        
+        # Store in cache (30 min TTL - settings almost never change)
+        if self.cache:
+            self.cache.set(cache_key, settings, ttl_seconds=1800)
+        
+        return settings
     
     def handle_mpasi_logging(self, user: str, message: str) -> Response:
         """Handle MPASI logging flow - OPTIMIZED"""
@@ -191,7 +211,8 @@ class FeedingHandler:
                 elif milk_type == "sufor":
                     session["data"]["milk_type"] = "sufor"
                     try:
-                        user_kcal = get_user_calorie_setting(user)
+                        # USE CACHED SETTINGS instead of direct DB call
+                        user_kcal = self._get_calorie_settings_cached(user)
                         session["data"]["sufor_calorie"] = session["data"]["volume_ml"] * user_kcal["sufor"]
                         session["state"] = "MILK_NOTE"
                         # OPTIMIZED: Shorter confirmation
@@ -279,20 +300,18 @@ class FeedingHandler:
                 reply = "Masukkan nilai kalori per ml ASI (default 0.67 kkal/ml):\n\nContoh: 0.67 atau tekan enter untuk default"
                 self.session_manager.update_session(user, state=session["state"], data=session["data"])
                 
-            elif session["state"] == "SET_KALORI_ASI":
-                val = message.strip()
+            if session["state"] == "SET_KALORI_ASI":
                 try:
                     kcal = 0.67 if val == "" else float(val.replace(",", "."))
-                    if kcal <= 0 or kcal > 5:
-                        reply = "❌ Nilai kalori harus antara 0.1 - 5.0 kkal/ml"
-                    else:
+                    if 0.1 <= kcal <= 5:
                         set_user_calorie_setting(user, "asi", kcal)
                         
-                        # Log setting change
-                        self.logger.info(f"User action: user_id={user}, action='calorie_setting_updated', success=True, "
-                                       f"details={{'milk_type': 'asi', 'new_value': {kcal}}}")
+                        # INVALIDATE CACHE after update
+                        if self.cache:
+                            cache_key = f"{user}:calorie_settings"
+                            self.cache.delete(cache_key)
                         
-                        reply = f"✅ Nilai kalori ASI berhasil diset ke {kcal} kkal/ml."
+                        reply = f"✅ Nilai kalori ASI: {kcal} kkal/ml"
                         session["state"] = None
                         session["data"] = {}
                 except ValueError:
