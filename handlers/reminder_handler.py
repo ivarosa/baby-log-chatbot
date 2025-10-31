@@ -23,7 +23,8 @@ class ReminderHandler:
     
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        self.logger = logger  # Use simple logger instead of app_logger
+        self.logger = logger
+        self.cache = cache # Use simple logger instead of app_logger
         
         # Create a mock app_logger to handle all the app_logger calls
         class MockAppLogger:
@@ -165,7 +166,10 @@ class ReminderHandler:
                     try:
                         save_reminder(user, session["data"])
                         
-                        self.app_logger.log_user_action(user_id=user, action='reminder_created', success=True)
+                        # INVALIDATE CACHE after save
+                        if self.cache:
+                            cache_key = f"{user}:reminders"
+                            self.cache.delete(cache_key)
                         
                         # OPTIMIZED: Much shorter success message
                         reply = (
@@ -213,6 +217,22 @@ class ReminderHandler:
         resp = MessagingResponse()
         
         try:
+
+            cache_key = f"{user}:reminders"
+            reminders = None
+            
+            # Try cache first
+            if self.cache:
+                reminders = self.cache.get(cache_key)
+            
+            # Cache miss - query database
+            if reminders is None:
+                reminders = get_user_reminders(user)
+                
+                # Store in cache (5 min TTL)
+            if self.cache and reminders:
+                self.cache.set(cache_key, reminders, ttl_seconds=300)
+            
             reminders = get_user_reminders(user)
             if not reminders:
                 # OPTIMIZED: Much shorter
