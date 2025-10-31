@@ -18,7 +18,7 @@ class ChildHandler:
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
         self.logger = logger
-        self.cache_manager = cache_manager  #new
+        self.cache = cache  #new
     
     def is_premium(self, user: str) -> bool:
         """Check if user has premium access"""
@@ -105,12 +105,17 @@ class ChildHandler:
             elif session["state"] == "ADDCHILD_CONFIRM":
                 if message.lower() == "ya":
                     try:
-                        save_child(user, session["data"])
-                        # OPTIMIZED: Single consolidated message
-                        reply = (
-                            f"✅ Data {session['data']['name']} tersimpan!\n\n"
-                            f"Ketik 'tampilkan anak' untuk lihat data"
-                        )
+                    save_child(user, session["data"])
+                    
+                    # INVALIDATE CACHE after save
+                    if self.cache:
+                        cache_key = f"{user}:child_data"
+                        self.cache.delete(cache_key)
+                        self.logger.debug(f"Cache invalidated: {cache_key}")
+                    
+                    reply = (f"✅ Data {session['data']['name']} tersimpan!"
+                                f"Ketik 'tampilkan anak' untuk lihat data"
+                            )
                         session["state"] = None
                         session["data"] = {}
                     except Exception as e:
@@ -148,13 +153,29 @@ class ChildHandler:
             return Response(str(resp), media_type="application/xml")
     
     def handle_show_child(self, user: str) -> Response:
-        """Handle 'tampilkan anak' command"""
+        """Handle 'tampilkan anak' - WITH CACHING"""
         resp = MessagingResponse()
         
         try:
-            row = self.cache_manager.get_child_data(user, get_child)
+            # TRY CACHE FIRST
+            cache_key = f"{user}:child_data"
+            row = None
+            
+            if self.cache:
+                row = self.cache.get(cache_key)
+                if row:
+                    self.logger.debug(f"Cache HIT: {cache_key}")
+            
+            # CACHE MISS - Query database
+            if row is None:
+                self.logger.debug(f"Cache MISS: {cache_key}")
+                row = get_child(user)
+                
+                # STORE IN CACHE (10 min TTL - child data rarely changes)
+                if row and self.cache:
+                    self.cache.set(cache_key, row, ttl_seconds=600)
+            
             if row:
-                # OPTIMIZED: Shorter formatting
                 reply = (
                     f"📝 Data Anak:\n"
                     f"• Nama: {row[0]}\n"
@@ -164,11 +185,11 @@ class ChildHandler:
                     f"• Berat: {row[4]} kg"
                 )
             else:
-                # OPTIMIZED: Shorter
                 reply = "Belum ada data. Ketik 'tambah anak'"
+                
         except Exception as e:
-            self.logger.error(f"Error getting child data: {e}", exc_info=True)
-            reply = "❌ Gagal mengambil data"  # OPTIMIZED: Much shorter
+            self.logger.error(f"Error: {e}", exc_info=True)
+            reply = "❌ Gagal mengambil data"
         
         resp.message(reply)
         return Response(str(resp), media_type="application/xml")
