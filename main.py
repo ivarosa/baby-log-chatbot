@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from twilio.twiml.messaging_response import MessagingResponse
 from utils.rate_limiter import RateLimiter, CostTracker
 from utils.cache_manager import CachedDatabaseOperations
+from utils.simple_cache import SimpleCache
 
 # Configure production logging FIRST
 logging.basicConfig(
@@ -59,6 +60,9 @@ except Exception as e:
 
 # Initialize (around line 55):
 cache_manager = CachedDatabaseOperations()
+
+# Initialize cache (after db_pool)
+simple_cache = SimpleCache()
 
 # Initialize handler variables
 child_handler = None
@@ -215,13 +219,13 @@ async def initialize_handlers():
         from handlers.meal_reminder_handler import MealReminderHandler  # ADD THIS
         from handlers.onboarding_handler import OnboardingHandler
         
-        child_handler = ChildHandler(session_manager, logger, cache_manager)
-        feeding_handler = FeedingHandler(session_manager, logger, cache_manager)
-        sleep_handler = SleepHandler(session_manager, logger, cache_manager)
-        reminder_handler = ReminderHandler(session_manager, logger, cache_manager)
-        summary_handler = SummaryHandler(session_manager, logger, cache_manager)
-        meal_reminder_handler = MealReminderHandler(session_manager, logger, cache_manager)  # ADD THIS
-        onboarding_handler = OnboardingHandler(session_manager, logger, cache_manager)
+        child_handler = ChildHandler(session_manager, logger, simple_cache)
+        feeding_handler = FeedingHandler(session_manager, logger, simple_cache)
+        sleep_handler = SleepHandler(session_manager, logger)
+        reminder_handler = ReminderHandler(session_manager, logger, simple_cache)
+        summary_handler = SummaryHandler(session_manager, logger)
+        meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
+        onboarding_handler = OnboardingHandler(session_manager, logger)
 
         
         logger.info("All handlers initialized successfully")
@@ -487,6 +491,7 @@ async def get_cost_stats():
     return {
         'daily_messages': cost_tracker.get_daily_count(),
         'monthly_estimate': cost_tracker.estimate_monthly_cost(),
+        'cache_stats': simple_cache.get_stats(),
         'top_users': cost_tracker.get_top_users(),
         'cost_alerts': cost_tracker.check_cost_alert(monthly_budget=100.0)
     }
