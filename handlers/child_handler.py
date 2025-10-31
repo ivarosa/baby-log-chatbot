@@ -18,6 +18,7 @@ class ChildHandler:
     def __init__(self, session_manager, logger):
         self.session_manager = session_manager
         self.logger = logger
+        self.cache_manager = cache_manager  #new
     
     def is_premium(self, user: str) -> bool:
         """Check if user has premium access"""
@@ -151,7 +152,7 @@ class ChildHandler:
         resp = MessagingResponse()
         
         try:
-            row = get_child(user)
+            row = self.cache_manager.get_child_data(user, get_child)
             if row:
                 # OPTIMIZED: Shorter formatting
                 reply = (
