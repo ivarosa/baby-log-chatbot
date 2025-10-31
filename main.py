@@ -19,6 +19,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from twilio.twiml.messaging_response import MessagingResponse
 from utils.rate_limiter import RateLimiter, CostTracker
+from utils.cache_manager import CachedDatabaseOperations
 
 # Configure production logging FIRST
 logging.basicConfig(
@@ -55,6 +56,9 @@ try:
 except Exception as e:
     logger.critical(f"❌ Failed to initialize core components: {e}")
     sys.exit(1)
+
+# Initialize (around line 55):
+cache_manager = CachedDatabaseOperations()
 
 # Initialize handler variables
 child_handler = None
@@ -211,13 +215,13 @@ async def initialize_handlers():
         from handlers.meal_reminder_handler import MealReminderHandler  # ADD THIS
         from handlers.onboarding_handler import OnboardingHandler
         
-        child_handler = ChildHandler(session_manager, logger)
-        feeding_handler = FeedingHandler(session_manager, logger)
-        sleep_handler = SleepHandler(session_manager, logger)
-        reminder_handler = ReminderHandler(session_manager, logger)
-        summary_handler = SummaryHandler(session_manager, logger)
-        meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
-        onboarding_handler = OnboardingHandler(session_manager, logger)
+        child_handler = ChildHandler(session_manager, logger, cache_manager)
+        feeding_handler = FeedingHandler(session_manager, logger, cache_manager)
+        sleep_handler = SleepHandler(session_manager, logger, cache_manager)
+        reminder_handler = ReminderHandler(session_manager, logger, cache_manager)
+        summary_handler = SummaryHandler(session_manager, logger, cache_manager)
+        meal_reminder_handler = MealReminderHandler(session_manager, logger, cache_manager)  # ADD THIS
+        onboarding_handler = OnboardingHandler(session_manager, logger, cache_manager)
 
         
         logger.info("All handlers initialized successfully")
