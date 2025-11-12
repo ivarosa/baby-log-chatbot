@@ -395,6 +395,12 @@ async def process_message(user: str, message: str, background_tasks: BackgroundT
         resp.message(WELCOME_MESSAGE)
         return Response(str(resp), media_type="application/xml")
     
+    # Handle Twilio sandbox join commands (e.g., "join shallow-arrow")
+    if message.lower().startswith("join "):
+        session_manager.clear_session(user)
+        resp.message(WELCOME_MESSAGE)
+        return Response(str(resp), media_type="application/xml")
+    
     if message.lower() in ["help", "bantuan"]:
         resp.message(HELP_MESSAGE)
         return Response(str(resp), media_type="application/xml")
