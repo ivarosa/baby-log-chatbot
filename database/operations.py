@@ -208,6 +208,14 @@ def create_postgresql_tables(cursor):
             days_of_week TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS group_users (
+            id SERIAL PRIMARY KEY,
+            user_phone TEXT NOT NULL UNIQUE,
+            joined_from_group BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
         """
     ]
     
@@ -391,6 +399,14 @@ def create_sqlite_tables(cursor):
             last_sent TIMESTAMP,
             next_due TIMESTAMP,
             days_of_week TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS group_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_phone TEXT NOT NULL UNIQUE,
+            joined_from_group INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -1311,3 +1327,43 @@ def get_meal_reminder_count(user: str) -> int:
 def calculate_adherence_rate(user: str, medication_name: str = None) -> float:
     """Calculate medication adherence rate (percentage)"""
     pass
+
+@ErrorHandler.handle_database_error
+def save_group_user(user: str) -> bool:
+    """
+    Save a user who joined from a group chat.
+    Returns True if newly registered, False if already exists.
+    """
+    database_url = os.environ.get('DATABASE_URL')
+    user_col = DatabaseSecurity.get_user_column(database_url)
+    table_name = DatabaseSecurity.validate_table_name('group_users')
+    
+    with db_pool.get_connection() as conn:
+        c = conn.cursor()
+        
+        # Check if user already exists
+        if database_url:
+            c.execute(f'SELECT COUNT(*) FROM {table_name} WHERE {user_col}=%s', (user,))
+        else:
+            c.execute(f'SELECT COUNT(*) FROM {table_name} WHERE {user_col}=?', (user,))
+        
+        result = c.fetchone()
+        exists = result[0] > 0 if result else False
+        
+        if exists:
+            return False  # Already registered
+        
+        # Insert new group user
+        if database_url:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, joined_from_group, created_at)
+                VALUES (%s, TRUE, NOW())
+            ''', (user,))
+        else:
+            c.execute(f'''
+                INSERT INTO {table_name} ({user_col}, joined_from_group, created_at)
+                VALUES (?, 1, CURRENT_TIMESTAMP)
+            ''', (user,))
+        
+        return True  # Newly registered
+

@@ -71,6 +71,7 @@ sleep_handler = None
 reminder_handler = None
 summary_handler = None
 medication_handler = None
+group_handler = None
 
 # Simple healthcheck flag
 app_ready = False
@@ -206,7 +207,7 @@ async def initialize_database_with_retry(max_retries: int = 5):
 # Initialize handlers with fallback
 async def initialize_handlers():
     """Initialize all handlers with fallback mechanisms"""
-    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler, meal_reminder_handler
+    global child_handler, feeding_handler, sleep_handler, reminder_handler, summary_handler, meal_reminder_handler, group_handler
     
     try:
         logger.info("Starting handler initialization...")
@@ -218,6 +219,7 @@ async def initialize_handlers():
         from handlers.summary_handler import SummaryHandler
         from handlers.meal_reminder_handler import MealReminderHandler  # ADD THIS
         from handlers.onboarding_handler import OnboardingHandler
+        from handlers.group_handler import GroupHandler
         
         child_handler = ChildHandler(session_manager, logger, simple_cache)
         feeding_handler = FeedingHandler(session_manager, logger, simple_cache)
@@ -226,6 +228,7 @@ async def initialize_handlers():
         summary_handler = SummaryHandler(session_manager, logger)
         meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
         onboarding_handler = OnboardingHandler(session_manager, logger)
+        group_handler = GroupHandler(session_manager, logger)
 
         
         logger.info("All handlers initialized successfully")
@@ -379,6 +382,14 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
 async def process_message(user: str, message: str, background_tasks: BackgroundTasks) -> Response:
     """Process user message"""
     resp = MessagingResponse()
+    
+    # Check if message is from a group
+    if group_handler and group_handler.is_group_message(user):
+        # Handle join command from groups
+        if message.lower().strip() in ["join", "gabung", "/join"]:
+            return group_handler.handle_join_command(user, message)
+        # For other messages from groups, redirect to private chat
+        return group_handler.handle_group_message(user, message)
     
     # Get session
     session = session_manager.get_session(user)
