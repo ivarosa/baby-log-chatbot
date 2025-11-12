@@ -354,16 +354,7 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         
         cost_tracker.log_message(user)
         
-        return result
-        
-    except Exception as e:
-        logger.error(f"❌ Request parsing error: {e}")
-        resp = MessagingResponse()
-        resp.message("Error processing request")
-        return Response(str(resp), media_type="application/xml")
-    
-    # Process message with timeout
-    try:
+        # Process message with timeout
         result = await asyncio.wait_for(
             process_message(user, message, background_tasks),
             timeout=25.0
@@ -374,6 +365,12 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.error(f"⏱️ Timeout for user {user}")
         resp = MessagingResponse()
         resp.message("⏱️ Request timeout. Silakan coba lagi.")
+        return Response(str(resp), media_type="application/xml")
+        
+    except Exception as e:
+        logger.error(f"❌ Request parsing error: {e}")
+        resp = MessagingResponse()
+        resp.message("Error processing request")
         return Response(str(resp), media_type="application/xml")
 
 async def process_message(user: str, message: str, background_tasks: BackgroundTasks) -> Response:
