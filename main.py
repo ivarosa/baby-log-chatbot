@@ -228,7 +228,7 @@ async def initialize_handlers():
         summary_handler = SummaryHandler(session_manager, logger)
         meal_reminder_handler = MealReminderHandler(session_manager, logger)  # ADD THIS
         onboarding_handler = OnboardingHandler(session_manager, logger)
-        group_handler = GroupHandler(session_manager=session_manager, logger_obj=logger)
+        group_handler = GroupHandler(session_manager, logger)
 
         
         logger.info("All handlers initialized successfully")

@@ -11,12 +11,9 @@ _DASH_NORMALIZER = re.compile(r"[–—‑\u2011]")
 class GroupHandler:
     """Handle simple textual 'join <group>' commands via WhatsApp/Twilio."""
 
-    def __init__(self, session_manager=None, logger_obj=None):
+    def __init__(self, session_manager, logger):
         self.session_manager = session_manager
-        if logger_obj:
-            self.logger = logger_obj
-        else:
-            self.logger = logger
+        self.logger = logger
 
     def _normalize_group_name(self, raw: str) -> str:
         if not raw:
